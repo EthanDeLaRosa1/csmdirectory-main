@@ -22,12 +22,35 @@ import {
   Eye,
   EyeOff,
   Mail,
+  ExternalLink,
+  Users,
 } from "lucide-react";
 import fileSaver from "file-saver";
 const { saveAs } = (fileSaver as any) || { saveAs: undefined };
 import { supabase } from "@/lib/supabase";
 
 const SAMPLE_ACCOUNTS = ["Brenntag", "Jeppesen", "Travelers", "Copado", "The Nebraska Medical Center"];
+
+const getChronoTimestamp = (value: unknown): number => {
+  if (!value) return 0;
+  const parsed = new Date(String(value));
+  const time = parsed.getTime();
+  return Number.isNaN(time) ? 0 : time;
+};
+
+const sortCasesNewestFirst = (cases: any[] = []) =>
+  [...cases].sort((a: any, b: any) => {
+    const aTime = getChronoTimestamp(a?.CreatedDate || a?.date_opened || a?.created_at || a?.createdDate);
+    const bTime = getChronoTimestamp(b?.CreatedDate || b?.date_opened || b?.created_at || b?.createdDate);
+    return bTime - aTime;
+  });
+
+const sortGongTranscriptsNewestFirst = (transcripts: any[] = []) =>
+  [...transcripts].sort((a: any, b: any) => {
+    const aTime = getChronoTimestamp(a?.startedAt || a?.startedTimestamp || a?.started || a?.date);
+    const bTime = getChronoTimestamp(b?.startedAt || b?.startedTimestamp || b?.started || b?.date);
+    return bTime - aTime;
+  });
 
 const safeCacheSet = (key: string, value: string) => {
   try {
@@ -281,8 +304,8 @@ export const GongItTab = () => {
         return;
       }
 
-      const sfCases = data?.salesforceCases || data?.cases || [];
-      const gongCalls = data?.transcripts || data?.gongData || [];
+      const sfCases = sortCasesNewestFirst(data?.salesforceCases || data?.cases || []);
+      const gongCalls = sortGongTranscriptsNewestFirst(data?.transcripts || data?.gongData || []);
       const ebsta = data?.ebstaData || null;
 
       setCases(sfCases);
@@ -309,7 +332,7 @@ export const GongItTab = () => {
       const finalPayload = {
         ...data,
         accountName: data.accountName || trimmed,
-        cases: Array.from(uniqueCasesMap.values()),
+        cases: sortCasesNewestFirst(Array.from(uniqueCasesMap.values())),
         salesforceCases: sfCases,
         transcripts: gongCalls,
         ebstaData: ebsta,
@@ -539,6 +562,9 @@ export const GongItTab = () => {
 
   const extractedEbstaScore =
     result?.ebstaData?.ebstaRecord?.Ebsta_Score__c ?? result?.ebstaData?.score;
+
+  const displayCases = sortCasesNewestFirst(result?.cases || cases || []);
+  const displayTranscripts = sortGongTranscriptsNewestFirst(result?.transcripts || transcripts || []);
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-8 relative">
@@ -967,21 +993,54 @@ export const GongItTab = () => {
 
               {showGongCard && (
                 <div className="max-h-[480px] overflow-y-auto space-y-3 pr-2">
-                  {!result.transcripts || result.transcripts.length === 0 ? (
+                  {!displayTranscripts || displayTranscripts.length === 0 ? (
                     <p className="text-muted-foreground text-xs italic">No recent Gong transcripts found for this account.</p>
                   ) : (
-                    result.transcripts.map((t: any) => (
-                      <div key={t.callId} className="bg-muted/30 border border-border/60 p-3.5 rounded-xl space-y-2 hover:border-primary/30 transition-colors">
-                        <div className="flex items-center justify-between">
-                          <span className="text-amber-600 dark:text-amber-400 font-mono text-xs font-semibold flex items-center gap-1">
-                            <Layers className="w-3 h-3" /> Call ID: {t.callId}
-                          </span>
-                          <span className="text-[10px] text-muted-foreground font-mono">
-                            {t.transcript?.length || 0} Speakers
-                          </span>
+                    displayTranscripts.map((t: any) => (
+                      <div key={t.callId || t.id || `${t.title}-${t.started}`} className="bg-muted/30 border border-border/60 p-3.5 rounded-xl space-y-2.5 hover:border-primary/30 transition-colors">
+                        <div className="flex items-start justify-between gap-2">
+                          <h4 className="text-foreground text-xs font-bold line-clamp-1 flex items-center gap-1.5">
+                            <Layers className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                            <span>{t.title || t.callName || t.name || "Untitled Gong Call"}</span>
+                          </h4>
+
+                          {t.url && (
+                            <a
+                              href={t.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 border border-amber-500/30 px-2 py-0.5 rounded-lg font-semibold shrink-0 flex items-center gap-1 transition-colors"
+                            >
+                              <span>Watch in Gong</span>
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          )}
                         </div>
-                        <p className="text-foreground text-[11px] line-clamp-3 font-mono bg-background/80 p-2 rounded-lg border border-border/50">
-                          {(t.transcript || []).map((m: any) => (m.sentences || []).map((s: any) => s.text).join(" ")).join(" ")}
+
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground font-mono">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-muted-foreground" /> {t.started || t.startedAt || t.date || "N/A"}
+                          </span>
+                          {t.durationMinutes && (
+                            <span className="bg-muted px-1.5 py-0.5 rounded border border-border">
+                              ⏱️ {t.durationMinutes} mins
+                            </span>
+                          )}
+                          <span className="opacity-60 ml-auto">ID: {t.callId || t.id || "N/A"}</span>
+                        </div>
+
+                        {t.parties && t.parties.length > 0 && (
+                          <div className="flex items-start gap-1 text-[10px] text-muted-foreground border-t border-border/40 pt-1.5">
+                            <Users className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
+                            <p className="line-clamp-1">
+                              <span className="font-semibold text-foreground">Attendees:</span>{" "}
+                              {t.parties.map((p: any) => p.name || p.email || p.title || "Unknown").join(", ")}
+                            </p>
+                          </div>
+                        )}
+
+                        <p className="text-foreground text-[11px] line-clamp-3 font-mono bg-background/80 p-2.5 rounded-lg border border-border/50 leading-relaxed">
+                          {(t.transcript || []).map((m: any) => (m.sentences || []).map((s: any) => s.text).join(" ")).join(" ") || "No transcript excerpt available."}
                         </p>
                       </div>
                     ))

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { CsmuGuides } from "@/components/directory/csmu-guides";
 import { GongItTab } from "@/components/directory/gong-it";
-import { PazPortalTab } from "@/components/directory/paz-portal";
+import { PazPortalTab as PazPortal } from "@/components/directory/paz-portal";
 import {
   Banknote,
   Compass,
@@ -248,33 +248,23 @@ function DirectoryPage() {
   return (
     <div className="min-h-screen bg-background text-foreground selection:bg-primary/20">
       {/* ⚡ SINGLE INTEGRATED STICKY HEADER ⚡ */}
-          <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-background/95 backdrop-blur-sm transition-all">
+      <header className="sticky top-0 z-40 w-full bg-background/95 backdrop-blur-sm transition-all">
         <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
           
           {/* 1. Left: Brand Title */}
-          <div className="flex items-center gap-2.5 shrink-0">
-            <span className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow-sm">
-              <Zap className="size-3.5 fill-current" />
-            </span>
-            
-            <div className="flex flex-col">
-              <span className="text-xs sm:text-sm font-bold tracking-tight whitespace-nowrap">
-                Copado CS Command Center
-              </span>
-            </div>
-          </div>
+          <div className="flex items-center gap-2.5 shrink-0" aria-hidden="true" />
 
           {/* 2. Middle: Main Navigation Tabs */}
           <nav className="flex items-center gap-1 overflow-x-auto no-scrollbar py-1">
             {(
               [
-                ["directory", "Department Directory", LayoutGrid],
-                ["gongit", "Gong It", Sparkles],
-                ["servicenow", "PAZ Portal", LayoutDashboard],
-                ["links", "Link Bank", Link2],
-                ["csmu", "CSMU Guides", GraduationCap],
-                ["glossary", "Glossary & Acronym Finder", BookOpen],
-                ["feedback", "CSM Feedback & Wishlist", MessageSquarePlus],
+                ["directory", "Directory", LayoutGrid],
+                ["gongit", "Gong", LayoutDashboard],
+                ["servicenow", "PAZ Portal", Sparkles],
+                ["links", "Links", Link2],
+                ["csmu", "CSMU", GraduationCap],
+                ["glossary", "Glossary", BookOpen],
+                ["feedback", "Feedback", MessageSquarePlus],
               ] as [ViewId, string, typeof LifeBuoy][]
             ).map(([id, label, TabIcon]) => (
               <button
@@ -294,17 +284,6 @@ function DirectoryPage() {
 
           {/* 3. Right: Quick Actions & Settings */}
           <div className="flex items-center gap-2 shrink-0">
-            {view === "directory" && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setSlackModalOpen(true)}
-                className="text-xs gap-1.5 h-8 px-2.5 hidden sm:inline-flex"
-              >
-                <MessageSquareCode className="size-3.5 text-sky-500" /> Slack Intake
-              </Button>
-            )}
-
             <button
               onClick={() => setSettingsOpen(true)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-border bg-card/60 text-muted-foreground hover:text-foreground hover:bg-accent transition-all text-xs font-medium"
@@ -392,7 +371,7 @@ function DirectoryPage() {
             <GongItTab />
           </div>
           <div className={view === "servicenow" ? "block" : "hidden"}>
-            <PazPortalTab />
+            <PazPortal />
           </div>
           <div className={view === "links" ? "block" : "hidden"}>
             <LinkBank />
