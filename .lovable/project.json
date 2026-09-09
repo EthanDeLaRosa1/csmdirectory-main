@@ -3,3 +3,4 @@
   "template": "tanstack_start_ts_current",
   "revision": "tanstack_start_ts_current-4c753965f703"
 }
+//comment: This file is used by the Lovable CLI to determine which template was used to create this project. It is not used by the application itself.

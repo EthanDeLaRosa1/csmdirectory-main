@@ -215,7 +215,7 @@ function DirectoryPage() {
       /* ignore */
     }
   }, [autoExpandTriggers]);
-
+//comment
   const toggleStar = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const next = starredDepts.includes(id)
