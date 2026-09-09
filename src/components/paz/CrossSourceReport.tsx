@@ -3,7 +3,8 @@ import { runCrossSourceQuery, type CrossSourceResult } from "@/lib/paz/api";
 import { DataTable, type Column } from "./DataTable";
 import { usePersistedState, clearPersisted } from "@/lib/paz/persist";
 import { Card, CardHeader, CardContent, CardFooter, CardTitle, CardDescription } from "@/components/ui/card";
-import { FileText, Search, Sparkles, RefreshCw } from "lucide-react";
+import { FileText, Search, Sparkles, RefreshCw, Download, ArrowUp } from "lucide-react";
+import { exportXlsx } from "@/lib/paz/exporters";
 
 const RANGES = [
   { label: "180d", value: 180 },
@@ -65,6 +66,15 @@ export function CrossSourceReport(): JSX.Element {
   }
 
   const people = reportData?.crossReference?.people ?? [];
+
+  function handleExportPeople() {
+    if (!reportData || people.length === 0) return;
+    exportXlsx(people, PEOPLE_COLS, `${(reportData.accountName || "cross-source-report").replace(/\s+/g, "-").toLowerCase()}-people`);
+  }
+
+  function handleScrollTop() {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   return (
     <Card>
@@ -146,10 +156,27 @@ export function CrossSourceReport(): JSX.Element {
 
         {reportData && (
           <div className="mt-6">
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex items-center justify-between gap-3">
               <div className="text-sm text-muted-foreground">Cross-Reference: {reportData.crossReference.domains.length} domain(s)</div>
               <div className="flex items-center gap-2">
-                <button className="inline-flex items-center gap-2 rounded-md bg-muted/10 px-3 py-2 text-sm">Export</button>
+                <button
+                  type="button"
+                  onClick={handleExportPeople}
+                  disabled={people.length === 0}
+                  className="inline-flex items-center gap-2 rounded-md bg-muted/10 px-3 py-2 text-sm disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  Download
+                </button>
+                <button
+                  type="button"
+                  onClick={handleScrollTop}
+                  className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  title="Back to top"
+                >
+                  <ArrowUp className="w-4 h-4" />
+                  Top
+                </button>
               </div>
             </div>
 

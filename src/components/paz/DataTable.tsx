@@ -240,6 +240,15 @@ export function DataTable({
 
   return (
     <div className="dt">
+      <button
+        type="button"
+        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        className="fixed bottom-5 right-5 z-50 inline-flex items-center gap-2 rounded-full border border-border bg-background/90 px-3 py-2 text-xs font-medium shadow-lg backdrop-blur-sm transition hover:bg-accent"
+      >
+        <span aria-hidden="true">↑</span>
+        Top
+      </button>
+
       {allProducts.length > 0 && (
         <div className="dt-products">
           <span className="dt-products-label">Product</span>
@@ -332,12 +341,12 @@ export function DataTable({
         </div>
       )}
 
-      <div className="md-table-wrap">
-        <table className="md-table dt-table">
+      <div className="md-table-wrap" style={{ overflowX: "auto", margin: "10px 0" }}>
+        <table className="md-table dt-table" style={{ borderCollapse: "separate", borderSpacing: 0, width: "100%", minWidth: "900px", fontSize: "13px" }}>
           <thead>
             <tr>
               {visibleCols.map((c) => (
-                <th key={c.key} onClick={() => toggleSort(c.key)} className="dt-th">
+                <th key={c.key} onClick={() => toggleSort(c.key)} className="dt-th" style={{ border: "1px solid hsl(var(--border))", padding: "12px 14px", textAlign: "left", verticalAlign: "top", whiteSpace: "nowrap", background: "hsl(var(--muted)/0.06)" }}>
                   {c.label}{sort?.col === c.key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
                 </th>
               ))}
@@ -346,13 +355,13 @@ export function DataTable({
           <tbody>
             {!groups && filtered.slice(0, 500).map((r, i) => (
               <tr key={i} onClick={onRowClick ? () => onRowClick(r) : undefined} className={onRowClick ? "dt-click" : ""}>
-                {visibleCols.map((c) => <td key={c.key}>{cellString(r[c.key]).slice(0, 200)}</td>)}
+                {visibleCols.map((c) => <td key={c.key} style={{ border: "1px solid hsl(var(--border))", padding: "10px 14px", textAlign: "left", verticalAlign: "top", lineHeight: 1.45 }}>{cellString(r[c.key]).slice(0, 200)}</td>)}
               </tr>
             ))}
             {groups && groups.map((g) => (
               <GroupRows key={g.key} g={g} visibleCols={visibleCols} onRowClick={onRowClick} />
             ))}
-            {filtered.length === 0 && <tr><td colSpan={visibleCols.length} className="empty">No rows match.</td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={visibleCols.length} className="empty" style={{ border: "1px solid hsl(var(--border))", padding: "12px 14px" }}>No rows match.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -368,13 +377,13 @@ function GroupRows({ g, visibleCols, onRowClick }: { g: any; visibleCols: Column
   return (
     <>
       <tr className="dt-group" onClick={() => setOpen((o) => !o)}>
-        <td colSpan={visibleCols.length}>
+        <td colSpan={visibleCols.length} style={{ border: "1px solid hsl(var(--border))", padding: "10px 14px", background: "hsl(var(--muted)/0.04)" }}>
           <strong>{open ? "▾" : "▸"} {g.key}</strong> <span className="dt-roll">{roll.join(" · ")}</span>
         </td>
       </tr>
       {open && g.rows.slice(0, 300).map((r: any, i: number) => (
         <tr key={i} onClick={onRowClick ? () => onRowClick(r) : undefined} className={onRowClick ? "dt-click" : ""}>
-          {visibleCols.map((c) => <td key={c.key}>{cellString(r[c.key]).slice(0, 200)}</td>)}
+          {visibleCols.map((c) => <td key={c.key} style={{ border: "1px solid hsl(var(--border))", padding: "10px 14px", textAlign: "left", verticalAlign: "top", lineHeight: 1.45 }}>{cellString(r[c.key]).slice(0, 200)}</td>)}
         </tr>
       ))}
     </>
