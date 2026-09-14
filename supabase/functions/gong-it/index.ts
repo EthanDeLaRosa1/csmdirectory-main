@@ -18,6 +18,33 @@ const GONG_MAX_429_RETRIES = 3;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Simple Levenshtein distance for fuzzy matching
+function levenshtein(a: string, b: string): number {
+  const al = a.length;
+  const bl = b.length;
+  if (al === 0) return bl;
+  if (bl === 0) return al;
+  const v0 = new Array(bl + 1).fill(0);
+  const v1 = new Array(bl + 1).fill(0);
+  for (let j = 0; j <= bl; j++) v0[j] = j;
+  for (let i = 0; i < al; i++) {
+    v1[0] = i + 1;
+    for (let j = 0; j < bl; j++) {
+      const cost = a[i] === b[j] ? 0 : 1;
+      v1[j + 1] = Math.min(v1[j] + 1, v0[j + 1] + 1, v0[j] + cost);
+    }
+    for (let j = 0; j <= bl; j++) v0[j] = v1[j];
+  }
+  return v1[bl];
+}
+
+function similarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const dist = levenshtein(a, b);
+  const maxLen = Math.max(a.length, b.length);
+  return maxLen === 0 ? 1 : 1 - dist / maxLen;
+}
+
 async function getSalesforceAccessToken() {
   const sfInstanceUrl = Deno.env.get("SF_INSTANCE_URL") || Deno.env.get("SALESFORCE_INSTANCE_URL");
   const sfClientId = Deno.env.get("SF_CLIENT_ID");
@@ -410,15 +437,9 @@ async function fetchGongData(
   let debugGongError = "";
 
   try {
-    const normalizedAccountName = accountName
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    const keywords = normalizedAccountName
-      .split(" ")
-      .filter((word: string) => word.length > 3);
+    // Build keywords for fuzzy matching: split normalized name into meaningful tokens
+    const normalizedLower = (accountName || "").toLowerCase();
+    const keywords = normalizedLower.split(/\s+/).filter((w) => w.length > 2);
 
     const domainList = Array.from(autoDomains);
 
@@ -496,22 +517,21 @@ async function fetchGongData(
           domainList.some((domain) => email.endsWith(`@${domain}`))
         );
 
-        const accountNameMatch =
-          normalizedAccountName.length > 3 && title.includes(normalizedAccountName);
-
+        // Fuzzy/partial matches: title contains normalized tokens
         const matchingKeywordCount = keywords.filter((keyword: string) =>
-          title.includes(keyword)
+          title.includes(keyword) || similarity(keyword, title) >= 0.72
         ).length;
+        const keywordMatch = keywords.length > 0 && matchingKeywordCount >= Math.min(1, keywords.length);
 
-        const keywordMatch =
-          keywords.length > 0 &&
-          matchingKeywordCount >= Math.min(2, keywords.length);
+        const accountNameMatch = (accountName || "").length > 2 &&
+          (title.includes((accountName || "").toLowerCase()) || similarity((accountName || "").toLowerCase(), title) >= 0.7);
 
-        const emailKeywordMatch = parties.some((email: string) =>
-          keywords.some((keyword: string) =>
-            email.split("@")[0].includes(keyword)
-          )
-        );
+        const emailKeywordMatch = parties.some((email: string) => {
+          const local = email.split("@")[0] || "";
+          return keywords.some((keyword: string) =>
+            local.includes(keyword) || email.includes(keyword) || similarity(keyword, local) >= 0.72
+          );
+        });
 
         if (
           domainMatch ||
@@ -626,7 +646,20 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { accountName, daysBack = 180 } = await req.json();
+    const { accountName: rawAccountName, daysBack = 180, domain: hintedDomain } = await req.json();
+    // Normalize incoming account name and extract domain if provided
+    const accountName = (rawAccountName || "").toString();
+    const normalize = (n: string) => {
+      if (!n) return "";
+      let s = String(n).trim();
+      if (s.includes("@")) s = s.split("@")[0];
+      s = s.replace(/[.,]/g, " ");
+      s = s.replace(/\b(inc|inc\.|llc|corp|corporation|co\.|ltd|pty)\b/gi, "");
+      s = s.replace(/\s+/g, " ").trim();
+      return s;
+    };
+    const normalizedAccountName = normalize(accountName);
+    const extractedDomain = hintedDomain || (accountName.includes("@") ? accountName.split("@")[1] : /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(accountName) ? accountName : null);
     const effectiveDaysBack = Math.min(Number(daysBack) || 180, MAX_GONG_SEARCH_DAYS);
 
     if (!accountName || typeof accountName !== "string") {
@@ -654,8 +687,8 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     const sfAuth = await getSalesforceAccessToken();
 
-    const cases = await fetchSalesforceCases(supabase, accountName, sfAuth);
-    const ebstaData = await fetchEbstaData(accountName, sfAuth, effectiveDaysBack);
+    const cases = await fetchSalesforceCases(supabase, normalizedAccountName, sfAuth);
+    const ebstaData = await fetchEbstaData(normalizedAccountName, sfAuth, effectiveDaysBack);
 
     const ignoredDomains = new Set([
       "copado.com",
@@ -694,9 +727,10 @@ Deno.serve(async (req) => {
     if (gongAccessKey && gongSecretKey) {
       const authHeader = "Basic " + btoa(`${gongAccessKey}:${gongSecretKey}`);
 
+      // Pass normalized name and any hinted domain to Gong fetcher
       const gongData = await fetchGongData(
-        accountName,
-        autoDomains,
+        normalizedAccountName,
+        extractedDomain ? new Set([extractedDomain]) : autoDomains,
         effectiveDaysBack,
         authHeader
       );

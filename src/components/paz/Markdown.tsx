@@ -30,15 +30,25 @@ export function Markdown({ text }: { text: string }) {
         i += 1;
       }
       blocks.push(
-        <div className="md-table-wrap" key={key++}>
-          <table className="md-table">
+        <div className="md-table-wrap my-4 overflow-x-auto rounded-lg border border-border bg-card/40" key={key++}>
+          <table className="md-table min-w-full border-separate border-spacing-0 text-left text-sm">
             <thead>
-              <tr>{header.map((h, hi) => <th key={hi}>{inline(h)}</th>)}</tr>
+              <tr>
+                {header.map((h, hi) => (
+                  <th key={hi} className="border-b border-r border-border bg-muted/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground last:border-r-0">
+                    {inline(h)}
+                  </th>
+                ))}
+              </tr>
             </thead>
             <tbody>
               {rows.map((r, ri) => (
-                <tr key={ri}>
-                  {header.map((_, ci) => <td key={ci}>{inline((r[ci] ?? "").trim())}</td>)}
+                <tr key={ri} className="align-top">
+                  {header.map((_, ci) => (
+                    <td key={ci} className="border-b border-r border-border px-3 py-2 text-sm text-foreground last:border-r-0">
+                      {inline((r[ci] ?? "").trim())}
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>

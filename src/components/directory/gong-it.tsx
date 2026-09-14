@@ -28,6 +28,7 @@ import {
 import fileSaver from "file-saver";
 const { saveAs } = (fileSaver as any) || { saveAs: undefined };
 import { supabase } from "@/lib/supabase";
+import { collectBriefcase, normalizeAccountName, extractDomainFromQuery } from "@/lib/paz/api";
 
 const SAMPLE_ACCOUNTS = ["Brenntag", "Jeppesen", "Travelers", "Copado", "The Nebraska Medical Center"];
 
@@ -289,9 +290,19 @@ export const GongItTab = () => {
 
     try {
       const searchTerm = trimmed;
-      const { data, error } = await supabase.functions.invoke("gong-it", {
-        body: { accountName: searchTerm, account: searchTerm, daysBack },
-      });
+      // Prefer client wrapper that normalizes and passes domain hints
+      let data: any = null;
+      try {
+        data = await collectBriefcase(searchTerm, daysBack);
+      } catch (invokeErr) {
+        console.warn("collectBriefcase failed, falling back to direct invoke:", invokeErr);
+        const domain = extractDomainFromQuery(searchTerm);
+        const normalized = normalizeAccountName(searchTerm);
+        const res = await supabase.functions.invoke("gong-it", {
+          body: { accountName: normalized || searchTerm, daysBack, domain },
+        });
+        data = (res as any).data || res;
+      }
 
       if (searchIdRef.current !== thisSearchId) return;
 

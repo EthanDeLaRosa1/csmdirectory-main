@@ -238,8 +238,11 @@ export function DataTable({
     });
   }
 
+  const controlClass = "rounded-md border border-border bg-background/80 px-2.5 py-2 text-xs text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/25";
+  const actionClass = "inline-flex items-center justify-center rounded-md border border-border bg-muted/10 px-3 py-2 text-xs font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground";
+
   return (
-    <div className="dt">
+    <div className="dt space-y-3">
       <button
         type="button"
         onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
@@ -250,10 +253,10 @@ export function DataTable({
       </button>
 
       {allProducts.length > 0 && (
-        <div className="dt-products">
-          <span className="dt-products-label">Product</span>
+        <div className="dt-products flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/10 p-2">
+          <span className="dt-products-label text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Product</span>
           <button
-            className={`dt-chip ${selProducts.size === 0 ? "dt-chip-on" : ""}`}
+            className={`dt-chip rounded-full border px-2.5 py-1 text-[11px] font-medium ${selProducts.size === 0 ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-foreground"}`}
             onClick={() => setSelProducts(new Set())}
           >
             All
@@ -261,22 +264,22 @@ export function DataTable({
           {allProducts.map((p) => (
             <button
               key={p}
-              className={`dt-chip ${selProducts.has(p) ? "dt-chip-on" : ""}`}
+              className={`dt-chip rounded-full border px-2.5 py-1 text-[11px] font-medium ${selProducts.has(p) ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-foreground"}`}
               onClick={() => toggleProduct(p)}
             >
               {p}
             </button>
           ))}
           {selProducts.size > 0 && (
-            <span className="dt-products-hint">{selProducts.size} selected</span>
+            <span className="dt-products-hint text-[10px] text-muted-foreground">{selProducts.size} selected</span>
           )}
         </div>
       )}
-      <div className="dt-toolbar">
-        <input className="dt-search" placeholder="Filter…" value={text} onChange={(e) => setText(e.target.value)} />
+      <div className="dt-toolbar flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/10 p-2">
+        <input className={`${controlClass} min-w-[180px] flex-1`} placeholder="Filter…" value={text} onChange={(e) => setText(e.target.value)} />
         {allProducts.length > 0 && (
           <select
-            className="dt-select dt-product-select"
+            className={`${controlClass} min-w-[140px]`}
             value={selProducts.size === 1 ? [...selProducts][0] : ""}
             onChange={(e) => setSelProducts(e.target.value ? new Set([e.target.value]) : new Set())}
             title="Filter by product / contract application"
@@ -285,16 +288,16 @@ export function DataTable({
             {allProducts.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
         )}
-        <select className="dt-select" value={groupBy} onChange={(e) => setGroupBy(e.target.value)}>
+        <select className={`${controlClass} min-w-[140px]`} value={groupBy} onChange={(e) => setGroupBy(e.target.value)}>
           <option value="">No grouping</option>
           {cols.map((c) => <option key={c.key} value={c.key}>Group by {c.label}</option>)}
         </select>
-        <button className="dt-btn" onClick={() => setShowCols((v) => !v)}>Columns ▾</button>
-        <button className="dt-btn" onClick={() => setFilters((f) => [...f, { col: cols[0]?.key, op: "contains", val: "" }])}>+ Filter</button>
-        <button className="dt-btn" onClick={exportCsv}>CSV</button>
-        <button className="dt-btn" onClick={() => exportXlsx(filtered, visibleCols, csvName.replace(/\.csv$/, ""))}>Excel</button>
-        <button className="dt-btn" onClick={() => exportPdf(filtered, visibleCols, csvName.replace(/\.csv$/, ""), csvName.replace(/\.csv$/, ""))}>PDF</button>
-        <span className="dt-count">{filtered.length} / {rows.length}</span>
+        <button className={actionClass} onClick={() => setShowCols((v) => !v)}>Columns ▾</button>
+        <button className={actionClass} onClick={() => setFilters((f) => [...f, { col: cols[0]?.key, op: "contains", val: "" }])}>+ Filter</button>
+        <button className={actionClass} onClick={exportCsv}>CSV</button>
+        <button className={actionClass} onClick={() => exportXlsx(filtered, visibleCols, csvName.replace(/\.csv$/, ""))}>Excel</button>
+        <button className={actionClass} onClick={() => exportPdf(filtered, visibleCols, csvName.replace(/\.csv$/, ""), csvName.replace(/\.csv$/, ""))}>PDF</button>
+        <span className="dt-count ml-auto text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">{filtered.length} / {rows.length}</span>
       </div>
 
       {showCols && (
@@ -319,22 +322,22 @@ export function DataTable({
       )}
 
       {filters.length > 0 && (
-        <div className="dt-filters">
+        <div className="dt-filters space-y-2 rounded-lg border border-border bg-muted/10 p-2">
           {filters.map((f, i) => {
             const type = colMap[f.col]?.type ?? "text";
             return (
-              <div className="dt-filter" key={i}>
-                <select value={f.col} onChange={(e) => setFilters((fs) => fs.map((x, xi) => xi === i ? { ...x, col: e.target.value, op: OPS[colMap[e.target.value]?.type ?? "text"][0].v } : x))}>
+              <div className="dt-filter flex flex-wrap items-center gap-2 rounded-md border border-border bg-background/60 p-2" key={i}>
+                <select className={`${controlClass} min-w-[120px]`} value={f.col} onChange={(e) => setFilters((fs) => fs.map((x, xi) => xi === i ? { ...x, col: e.target.value, op: OPS[colMap[e.target.value]?.type ?? "text"][0].v } : x))}>
                   {cols.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                 </select>
-                <select value={f.op} onChange={(e) => setFilters((fs) => fs.map((x, xi) => xi === i ? { ...x, op: e.target.value } : x))}>
+                <select className={`${controlClass} min-w-[100px]`} value={f.op} onChange={(e) => setFilters((fs) => fs.map((x, xi) => xi === i ? { ...x, op: e.target.value } : x))}>
                   {OPS[type].map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
                 </select>
-                <input type={type === "date" ? "date" : type === "number" ? "number" : "text"} value={f.val} onChange={(e) => setFilters((fs) => fs.map((x, xi) => xi === i ? { ...x, val: e.target.value } : x))} />
+                <input className={`${controlClass} min-w-[120px]`} type={type === "date" ? "date" : type === "number" ? "number" : "text"} value={f.val} onChange={(e) => setFilters((fs) => fs.map((x, xi) => xi === i ? { ...x, val: e.target.value } : x))} />
                 {f.op === "between" && (
-                  <input type={type === "date" ? "date" : "number"} value={f.val2 ?? ""} onChange={(e) => setFilters((fs) => fs.map((x, xi) => xi === i ? { ...x, val2: e.target.value } : x))} />
+                  <input className={`${controlClass} min-w-[120px]`} type={type === "date" ? "date" : "number"} value={f.val2 ?? ""} onChange={(e) => setFilters((fs) => fs.map((x, xi) => xi === i ? { ...x, val2: e.target.value } : x))} />
                 )}
-                <button className="dt-x" onClick={() => setFilters((fs) => fs.filter((_, xi) => xi !== i))}>✕</button>
+                <button className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-destructive/30 bg-destructive/5 text-xs font-semibold text-destructive" onClick={() => setFilters((fs) => fs.filter((_, xi) => xi !== i))}>✕</button>
               </div>
             );
           })}

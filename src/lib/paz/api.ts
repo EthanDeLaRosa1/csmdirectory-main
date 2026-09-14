@@ -84,11 +84,44 @@ export async function collectBriefcase(
   accountName: string,
   daysBack: number,
 ): Promise<BriefcaseResult> {
+  // Normalize account name and detect domain before invoking backend
+  const normalized = normalizeAccountName(accountName || "");
+  const domain = extractDomainFromQuery(accountName || "");
   const { data, error } = await supabase.functions.invoke("gong-it", {
-    body: { accountName, daysBack },
+    body: { accountName: normalized, daysBack, domain },
   });
   if (error) throw new Error(error.message || "Data collection failed");
   return data as BriefcaseResult;
+}
+
+// Normalize account display names by stripping punctuation and common suffixes
+export function normalizeAccountName(name: string): string {
+  if (!name) return "";
+  let n = String(name || "").trim();
+  // If it's an email, extract local-part or domain depending on format
+  if (n.includes("@")) {
+    n = n.split("@")[0];
+  }
+  // Remove commas and dots
+  n = n.replace(/[.,]/g, " ");
+  // Remove common corporate suffixes
+  n = n.replace(/\b(inc|inc\.|llc|corp|corporation|co\.|ltd|pty)\b/gi, "");
+  // Collapse whitespace and trim
+  n = n.replace(/\s+/g, " ").trim();
+  return n;
+}
+
+export function extractDomainFromQuery(query: string): string | null {
+  if (!query) return null;
+  const q = query.trim();
+  // If it's an email, return the domain
+  if (q.includes("@")) {
+    const parts = q.split("@");
+    return parts[1]?.toLowerCase() || null;
+  }
+  // If it looks like a domain (contains a dot and no spaces), return it
+  if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(q)) return q.toLowerCase();
+  return null;
 }
 
 export type ResearchResult = {
