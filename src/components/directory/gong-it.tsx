@@ -306,7 +306,7 @@ export const GongItTab = () => {
 
       if (searchIdRef.current !== thisSearchId) return;
 
-      const directError = Boolean(error);
+      const directError = Boolean(data?.error);
       setHasError(directError);
       if (directError) {
         console.error("Invocation Error:", error);
