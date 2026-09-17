@@ -6,10 +6,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const MAX_CALLS_TO_PROCESS = 40;
+const MAX_CALLS_TO_PROCESS = 50;
 const TRANSCRIPT_BATCH_SIZE = 50;
 const MAX_GONG_SEARCH_DAYS = 1460;
-const GONG_MAX_429_RETRIES = 3;
 
 const STOP_WORDS = new Set([
   "the", "a", "an", "and", "or", "of", "for", "in", "to", "on", "at", "by", "with",
@@ -353,6 +352,7 @@ function extractGongIds(text: string, into: Set<string>) {
 async function fetchGongCallIdsFromSalesforce(
   accountName: string,
   sfAuth: any,
+  effectiveDaysBack: number = 180,
   logs: string[] = []
 ): Promise<{ callId: string; title?: string; started?: string; url?: string }[]> {
   if (!sfAuth?.accessToken || !sfAuth?.instanceUrl) {
@@ -365,19 +365,23 @@ async function fetchGongCallIdsFromSalesforce(
 
   const distinctiveTokens = extractDistinctiveKeywords(accountName);
   const primaryBrandToken = distinctiveTokens.length > 0 ? distinctiveTokens[0] : accountName;
+  const cutoffMs = Date.now() - effectiveDaysBack * 24 * 60 * 60 * 1000;
 
-  // Step 1: Find Account IDs and Opportunity IDs linked to this Account/Brand
+  // Step 1: Find Account IDs (including Parent accounts)
   let accountIds: string[] = [];
-  let opportunityIds: string[] = [];
-
   try {
-    const accQuery = `SELECT Id, Name FROM Account WHERE Name LIKE '%${primaryBrandToken}%' OR Name LIKE '%${accountName}%' LIMIT 15`;
+    const accQuery = `SELECT Id, Name, ParentId FROM Account WHERE Name LIKE '%${primaryBrandToken}%' OR Name LIKE '%${accountName}%' LIMIT 30`;
     logs.push(`[Gong SF Lookup] Querying Accounts: ${accQuery}`);
     const accRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(accQuery)}`, { headers });
 
     if (accRes.ok) {
       const accData = await accRes.json();
-      accountIds = (accData.records || []).map((r: any) => String(r.Id));
+      const records = accData.records || [];
+      records.forEach((r: any) => {
+        if (r.Id) accountIds.push(String(r.Id));
+        if (r.ParentId) accountIds.push(String(r.ParentId));
+      });
+      accountIds = [...new Set(accountIds)];
       logs.push(`[Gong SF Lookup] Found ${accountIds.length} Account ID(s).`);
     }
   } catch (e) {
@@ -386,12 +390,14 @@ async function fetchGongCallIdsFromSalesforce(
 
   const accountIdClause = accountIds.length > 0 ? accountIds.map((id) => `'${id}'`).join(",") : null;
 
+  // Step 2: Find Opportunity IDs
+  let opportunityIds: string[] = [];
   try {
     let oppQuery = "";
     if (accountIdClause) {
-      oppQuery = `SELECT Id, Name FROM Opportunity WHERE AccountId IN (${accountIdClause}) OR Account.Name LIKE '%${primaryBrandToken}%' OR Name LIKE '%${primaryBrandToken}%' LIMIT 50`;
+      oppQuery = `SELECT Id, Name FROM Opportunity WHERE AccountId IN (${accountIdClause}) OR Account.Name LIKE '%${primaryBrandToken}%' OR Name LIKE '%${primaryBrandToken}%' LIMIT 100`;
     } else {
-      oppQuery = `SELECT Id, Name FROM Opportunity WHERE Account.Name LIKE '%${primaryBrandToken}%' OR Name LIKE '%${primaryBrandToken}%' LIMIT 50`;
+      oppQuery = `SELECT Id, Name FROM Opportunity WHERE Account.Name LIKE '%${primaryBrandToken}%' OR Name LIKE '%${primaryBrandToken}%' LIMIT 100`;
     }
 
     logs.push(`[Gong SF Lookup] Querying Opportunities: ${oppQuery}`);
@@ -408,7 +414,7 @@ async function fetchGongCallIdsFromSalesforce(
 
   const opportunityIdClause = opportunityIds.length > 0 ? opportunityIds.map((id) => `'${id}'`).join(",") : null;
 
-  // Step 2: Query Gong Managed Package Custom Objects (checking Account and Opportunity Lookups)
+  // Step 3: Query Gong Custom Objects using schema field inspection
   const gongObjects = [
     "Gong__Gong_Call__c",
     "Gong__Gong_Conversation__c",
@@ -422,27 +428,39 @@ async function fetchGongCallIdsFromSalesforce(
       const descRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/sobjects/${objName}/describe`, { headers });
       if (!descRes.ok) continue;
 
-      logs.push(`[Gong SF Lookup] Found Gong object schema: ${objName}`);
+      logs.push(`[Gong SF Lookup] Inspecting schema for ${objName}...`);
       const descData = await descRes.json();
-      const fields = (descData.fields || []).map((f: any) => f.name);
+      const allFields = descData.fields || [];
 
-      const titleField = fields.find((f: string) => /title|name|subject/i.test(f)) || "Name";
-      const urlField = fields.find((f: string) => /url|link/i.test(f));
-      const callIdField = fields.find((f: string) => /call.*id|gong_id|call_id/i.test(f));
-      const dateField = fields.find((f: string) => /start|date|created/i.test(f)) || "CreatedDate";
-      const primaryAccField = fields.find((f: string) => /primary.*account|account/i.test(f));
-      const primaryOppField = fields.find((f: string) => /opportunity/i.test(f));
+      // Filter ONLY reference fields pointing to Account or Opportunity
+      const accRefFields = allFields
+        .filter((f: any) => f.type === "reference" && (f.referenceTo || []).includes("Account"))
+        .map((f: any) => f.name);
+
+      const oppRefFields = allFields
+        .filter((f: any) => f.type === "reference" && (f.referenceTo || []).includes("Opportunity"))
+        .map((f: any) => f.name);
+
+      const titleField = allFields.find((f: any) => /title|name|subject/i.test(f.name))?.name || "Name";
+      const dateField = allFields.find((f: any) => f.label === "Started" || /start|date/i.test(f.name))?.name || "CreatedDate";
+      const possibleIdFields = allFields
+        .filter((f: any) => ["string", "url", "textarea"].includes(f.type) || /url|link|id|code/i.test(f.name))
+        .map((f: any) => f.name);
 
       const conditions: string[] = [];
-      if (accountIdClause && primaryAccField) conditions.push(`${primaryAccField} IN (${accountIdClause})`);
-      if (opportunityIdClause && primaryOppField) conditions.push(`${primaryOppField} IN (${opportunityIdClause})`);
+
+      if (accountIdClause && accRefFields.length > 0) {
+        accRefFields.forEach((af: string) => conditions.push(`${af} IN (${accountIdClause})`));
+      }
+
+      if (opportunityIdClause && oppRefFields.length > 0) {
+        oppRefFields.forEach((of: string) => conditions.push(`${of} IN (${opportunityIdClause})`));
+      }
+
       conditions.push(`Name LIKE '%${primaryBrandToken}%'`);
 
-      const selectFields = ["Id", titleField, dateField];
-      if (urlField) selectFields.push(urlField);
-      if (callIdField) selectFields.push(callIdField);
-
-      const soql = `SELECT ${[...new Set(selectFields)].join(", ")} FROM ${objName} WHERE ${conditions.join(" OR ")} ORDER BY ${dateField} DESC LIMIT 100`;
+      const selectFields = [...new Set(["Id", titleField, dateField, ...possibleIdFields])].slice(0, 25);
+      const soql = `SELECT ${selectFields.join(", ")} FROM ${objName} WHERE ${conditions.join(" OR ")} ORDER BY ${dateField} DESC LIMIT 100`;
       logs.push(`[Gong SF Lookup] Running SOQL: ${soql}`);
 
       const queryRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(soql)}`, { headers });
@@ -453,76 +471,93 @@ async function fetchGongCallIdsFromSalesforce(
         logs.push(`[Gong SF Lookup] ${objName} returned ${records.length} records.`);
 
         records.forEach((r: any) => {
-          let cid = callIdField ? r[callIdField] : null;
-          const u = urlField ? r[urlField] : null;
+          const callDateVal = r[dateField] || r.CreatedDate;
+          const callMs = callDateVal ? new Date(callDateVal).getTime() : 0;
 
-          if (!cid && u) {
+          if (effectiveDaysBack === 1460 || callMs === 0 || callMs >= cutoffMs) {
             const extracted = new Set<string>();
-            extractGongIds(String(u), extracted);
-            if (extracted.size > 0) cid = Array.from(extracted)[0];
-          }
 
-          if (cid) {
-            callMap.set(String(cid), {
-              callId: String(cid),
-              title: r[titleField] || "Untitled Gong Call",
-              started: r[dateField] || null,
-              url: u || null,
+            Object.entries(r).forEach(([k, val]) => {
+              if (k !== "attributes" && typeof val === "string") {
+                extractGongIds(val, extracted);
+              }
+            });
+
+            const urlVal = possibleIdFields.map((f) => r[f]).find((v) => typeof v === "string" && v.includes("gong.io")) || null;
+
+            extracted.forEach((cid) => {
+              callMap.set(cid, {
+                callId: cid,
+                title: r[titleField] || "Gong Call",
+                started: callDateVal || null,
+                url: urlVal,
+              });
             });
           }
         });
+      } else {
+        logs.push(`[Gong SF Lookup] ${objName} query failed (${queryRes.status}): ${await queryRes.text()}`);
       }
     } catch (e) {
-      logs.push(`[Gong SF Lookup] Error querying ${objName}: ${String(e)}`);
+      logs.push(`[Gong SF Lookup] Error on ${objName}: ${String(e)}`);
     }
   }
 
-  // Step 3: Query Gong Junction Objects
-  try {
-    const relDesc = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/sobjects/Gong__Related_Account__c/describe`, { headers });
-    if (relDesc.ok) {
-      const relConditions: string[] = [];
-      if (accountIdClause) relConditions.push(`Gong__Account__c IN (${accountIdClause})`);
-      relConditions.push(`Gong__Account__r.Name LIKE '%${primaryBrandToken}%'`);
+  // Step 4: Query Gong Junction Objects
+  const junctionObjects = ["Gong__Related_Account__c", "Gong__Related_Opportunity__c"];
+  for (const jObj of junctionObjects) {
+    try {
+      const jDesc = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/sobjects/${jObj}/describe`, { headers });
+      if (jDesc.ok) {
+        const jConditions: string[] = [];
+        if (accountIdClause && jObj.includes("Account")) jConditions.push(`Gong__Account__c IN (${accountIdClause})`);
+        if (opportunityIdClause && jObj.includes("Opportunity")) jConditions.push(`Gong__Opportunity__c IN (${opportunityIdClause})`);
+        jConditions.push(`Name LIKE '%${primaryBrandToken}%'`);
 
-      const relSoql = `SELECT Id, Gong__Gong_Call__c, Gong__Gong_Call__r.Name, Gong__Gong_Call__r.Gong__Call_URL__c, Gong__Gong_Call__r.Gong__Call_ID__c, Gong__Gong_Call__r.Gong__Call_Start__c FROM Gong__Related_Account__c WHERE ${relConditions.join(" OR ")} LIMIT 100`;
-      logs.push(`[Gong SF Lookup] Querying Gong__Related_Account__c: ${relSoql}`);
+        const jSoql = `SELECT Id, Gong__Gong_Call__c, Gong__Gong_Call__r.Name, Gong__Gong_Call__r.Gong__Call_URL__c, Gong__Gong_Call__r.Gong__Call_ID__c, Gong__Gong_Call__r.Gong__Call_Start__c, CreatedDate FROM ${jObj} WHERE ${jConditions.join(" OR ")} ORDER BY CreatedDate DESC LIMIT 100`;
+        logs.push(`[Gong SF Lookup] Querying ${jObj}: ${jSoql}`);
 
-      const relRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(relSoql)}`, { headers });
-      if (relRes.ok) {
-        const relData = await relRes.json();
-        const records = relData.records || [];
-        logs.push(`[Gong SF Lookup] Gong__Related_Account__c returned ${records.length} records.`);
+        const jRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(jSoql)}`, { headers });
+        if (jRes.ok) {
+          const jData = await jRes.json();
+          const records = jData.records || [];
+          logs.push(`[Gong SF Lookup] ${jObj} returned ${records.length} records.`);
 
-        records.forEach((r: any) => {
-          const callObj = r.Gong__Gong_Call__r;
-          if (callObj) {
-            let cid = callObj.Gong__Call_ID__c || callObj.Gong__Call_Id__c || callObj.Id;
-            const u = callObj.Gong__Call_URL__c;
+          records.forEach((r: any) => {
+            const callObj = r.Gong__Gong_Call__r;
+            if (callObj) {
+              const callDateVal = callObj.Gong__Call_Start__c || r.CreatedDate;
+              const callMs = callDateVal ? new Date(callDateVal).getTime() : 0;
 
-            if (!cid && u) {
-              const extracted = new Set<string>();
-              extractGongIds(String(u), extracted);
-              if (extracted.size > 0) cid = Array.from(extracted)[0];
+              if (effectiveDaysBack === 1460 || callMs === 0 || callMs >= cutoffMs) {
+                let cid = callObj.Gong__Call_ID__c || callObj.Gong__Call_Id__c || callObj.Id;
+                const u = callObj.Gong__Call_URL__c;
+
+                if (!cid && u) {
+                  const extracted = new Set<string>();
+                  extractGongIds(String(u), extracted);
+                  if (extracted.size > 0) cid = Array.from(extracted)[0];
+                }
+
+                if (cid) {
+                  callMap.set(String(cid), {
+                    callId: String(cid),
+                    title: callObj.Name || "Gong Call",
+                    started: callDateVal,
+                    url: u || null,
+                  });
+                }
+              }
             }
-
-            if (cid) {
-              callMap.set(String(cid), {
-                callId: String(cid),
-                title: callObj.Name || "Gong Call",
-                started: callObj.Gong__Call_Start__c,
-                url: u || null,
-              });
-            }
-          }
-        });
+          });
+        }
       }
+    } catch (e) {
+      logs.push(`[Gong SF Lookup] ${jObj} error: ${String(e)}`);
     }
-  } catch (e) {
-    logs.push(`[Gong SF Lookup] Junction query error: ${String(e)}`);
   }
 
-  // Step 4: Fallback Query on Task and Event
+  // Step 5: Fallback Query on Task and Event Objects
   for (const stdObj of ["Task", "Event"]) {
     try {
       const taskConditions: string[] = [];
@@ -541,19 +576,22 @@ async function fetchGongCallIdsFromSalesforce(
         logs.push(`[Gong SF Lookup] ${stdObj} returned ${records.length} records.`);
 
         records.forEach((r: any) => {
-          const extracted = new Set<string>();
-          extractGongIds(r.Description || "", extracted);
-          extractGongIds(r.Subject || "", extracted);
+          const callMs = r.CreatedDate ? new Date(r.CreatedDate).getTime() : 0;
+          if (effectiveDaysBack === 1460 || callMs === 0 || callMs >= cutoffMs) {
+            const extracted = new Set<string>();
+            extractGongIds(r.Description || "", extracted);
+            extractGongIds(r.Subject || "", extracted);
 
-          extracted.forEach((cid) => {
-            if (!callMap.has(cid)) {
-              callMap.set(cid, {
-                callId: cid,
-                title: r.Subject || "Gong Call",
-                started: r.CreatedDate,
-              });
-            }
-          });
+            extracted.forEach((cid) => {
+              if (!callMap.has(cid)) {
+                callMap.set(cid, {
+                  callId: cid,
+                  title: r.Subject || "Gong Call",
+                  started: r.CreatedDate,
+                });
+              }
+            });
+          }
         });
       }
     } catch (e) {
@@ -562,7 +600,7 @@ async function fetchGongCallIdsFromSalesforce(
   }
 
   const results = Array.from(callMap.values());
-  logs.push(`[Gong SF Lookup] Total unique Gong Call IDs identified in Salesforce: ${results.length}`);
+  logs.push(`[Gong SF Lookup] Total unique Gong Call IDs identified in Salesforce for the last ${effectiveDaysBack} days: ${results.length}`);
   return results;
 }
 
@@ -610,7 +648,7 @@ async function fetchGongTranscriptsByCallIds(callEntries: any[], authHeader: str
     gongTranscripts.push(...batch);
   }
 
-  logs.push(`[Gong API] Successfully received ${gongTranscripts.length} transcript payload(s).`);
+  logs.push(`[Gong API] Received ${gongTranscripts.length} transcript payload(s).`);
 
   return gongTranscripts.map((t: any) => {
     const meta = callIdMap.get(String(t.callId));
@@ -647,7 +685,7 @@ Deno.serve(async (req) => {
     const normalizedAccountName = normalize(accountName);
     const effectiveDaysBack = Math.min(Number(daysBack) || 180, MAX_GONG_SEARCH_DAYS);
 
-    debugLogs.push(`[Init] Search target: "${accountName}" (Normalized: "${normalizedAccountName}")`);
+    debugLogs.push(`[Init] Search target: "${accountName}" (Normalized: "${normalizedAccountName}", DaysBack: ${effectiveDaysBack})`);
 
     if (!accountName || typeof accountName !== "string") {
       return new Response(
@@ -677,20 +715,20 @@ Deno.serve(async (req) => {
     const cases = await fetchSalesforceCases(supabase, normalizedAccountName, sfAuth, debugLogs);
     const ebstaData = await fetchEbstaData(normalizedAccountName, sfAuth, effectiveDaysBack, debugLogs);
 
-    // 1. Query Salesforce for Account + Opportunity Gong Call IDs
-    const sfGongCallEntries = await fetchGongCallIdsFromSalesforce(normalizedAccountName, sfAuth, debugLogs);
+    // 1. Extract Gong Call IDs strictly within the selected daysBack timeframe
+    const sfGongCallEntries = await fetchGongCallIdsFromSalesforce(normalizedAccountName, sfAuth, effectiveDaysBack, debugLogs);
 
     let gongTranscripts: any[] = [];
     let debugGongStatus: number | null = null;
     let debugGongError = "";
 
-    // 2. Fetch full transcripts from Gong API
+    // 2. Fetch full speaker transcripts from Gong API
     if (gongAccessKey && gongSecretKey) {
       if (sfGongCallEntries.length > 0) {
         const authHeader = "Basic " + btoa(`${gongAccessKey}:${gongSecretKey}`);
         gongTranscripts = await fetchGongTranscriptsByCallIds(sfGongCallEntries, authHeader, debugLogs);
       } else {
-        debugLogs.push("[Gong API] Skipped transcript fetch — 0 Call IDs found in Salesforce.");
+        debugLogs.push("[Gong API] Skipped transcript fetch — 0 Call IDs found in Salesforce for this timeframe.");
       }
     } else {
       debugLogs.push("[Gong API] Missing Gong credentials in environment secrets.");
