@@ -438,21 +438,39 @@ export const GongItTab = () => {
     downloadJsonArtifact(`${safeName}-support-cases.json`, payload);
   };
 
+  // Client-side fallback in case the edge function response predates gongMarkdown.
+  const buildGongMarkdownLocally = (name: string, transcripts: any[]) => {
+    let md = `# Gong Call Transcripts: ${name}\n\n*${transcripts.length} call(s) matched · exported ${new Date().toLocaleDateString()}*\n\n`;
+    sortGongTranscriptsNewestFirst(transcripts).forEach((t: any) => {
+      md += `## ${t.title || "Untitled Gong Call"}\n\n`;
+      md += `- **Date:** ${t.started ? new Date(t.started).toLocaleString() : "N/A"}\n- **Call ID:** ${t.callId}\n`;
+      if (t.url) md += `- **Gong link:** ${t.url}\n`;
+      if (t.parties?.length) {
+        md += `- **Attendees:** ${t.parties.map((p: any) => p.name || p.emailAddress || p.email).filter(Boolean).join(", ")}\n`;
+      }
+      md += `\n### Transcript\n\n`;
+      (t.transcript || []).forEach((m: any) => {
+        const text = (m.sentences || []).map((s: any) => s.text).join(" ").trim();
+        if (text) md += `**${m.speakerName || m.speakerId || "Speaker"}:** ${text}\n\n`;
+      });
+      md += `---\n\n`;
+    });
+    return md;
+  };
+
   const downloadGongArtifact = () => {
     if (!result?.transcripts) return;
 
-    const payload = {
-      accountName: result.accountName || accountName,
-      transcripts: result.transcripts,
-      exportedAt: new Date().toISOString(),
-    };
+    const name = result.accountName || accountName || "account";
+    const md: string = result.gongMarkdown || buildGongMarkdownLocally(name, result.transcripts);
 
-    const safeName = (result.accountName || accountName || "account")
+    const safeName = name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "account";
 
-    downloadJsonArtifact(`${safeName}-gong-transcripts.json`, payload);
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    saveAs(blob, `${safeName}-gong-transcripts.md`);
   };
 
   const downloadSingleMarkdownArtifact = () => {
@@ -535,10 +553,11 @@ export const GongItTab = () => {
       md += `*No recent Gong call transcripts matched this account.*\n\n`;
     } else {
       result.transcripts.forEach((t: any) => {
-        md += `### Call ID: ${t.callId}\n\n`;
+        md += `### ${t.title || "Untitled Gong Call"} (${t.started ? new Date(t.started).toLocaleDateString() : "N/A"})\n\n`;
+        md += `*Call ID: ${t.callId}${t.url ? ` · ${t.url}` : ""}*\n\n`;
         (t.transcript || []).forEach((m: any) => {
           const sentences = (m.sentences || []).map((s: any) => s.text).join(" ");
-          md += `**[${m.speakerId || "Speaker"}]**: ${sentences}\n\n`;
+          md += `**[${m.speakerName || m.speakerId || "Speaker"}]**: ${sentences}\n\n`;
         });
         md += `============================================================\n\n`;
       });
@@ -1045,7 +1064,7 @@ export const GongItTab = () => {
                             <Users className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
                             <p className="line-clamp-1">
                               <span className="font-semibold text-foreground">Attendees:</span>{" "}
-                              {t.parties.map((p: any) => p.name || p.email || p.title || "Unknown").join(", ")}
+                              {t.parties.map((p: any) => p.name || p.emailAddress || p.email || "Unknown").join(", ")}
                             </p>
                           </div>
                         )}

@@ -8,41 +8,51 @@ const corsHeaders = {
 
 const MAX_CALLS_TO_PROCESS = 40;
 const TRANSCRIPT_BATCH_SIZE = 50;
-const MAX_GONG_SEARCH_DAYS = 1460; // 4-year range supported for CSM Briefcase
-
-// Speed guards: bound worst-case pagination so low-match accounts don't scan
-// the org's entire call history (the old cause of timeouts).
-const MAX_CALL_PAGES = 20; // ~2000 calls scanned max (Gong page size ~100)
-const GONG_PAGE_DELAY_MS = 350; // stay under Gong's ~3 req/s limit to avoid 429s
+const MAX_GONG_SEARCH_DAYS = 1460;
 const GONG_MAX_429_RETRIES = 3;
+
+const STOP_WORDS = new Set([
+  "the", "a", "an", "and", "or", "of", "for", "in", "to", "on", "at", "by", "with",
+  "inc", "inc.", "llc", "corp", "corporation", "co", "co.", "ltd", "pty", "group",
+  "center", "centre", "health", "healthcare", "medical", "hospital", "hospitals",
+  "system", "systems", "university", "department", "services", "solutions",
+  "international", "national", "association", "company"
+]);
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Simple Levenshtein distance for fuzzy matching
-function levenshtein(a: string, b: string): number {
-  const al = a.length;
-  const bl = b.length;
-  if (al === 0) return bl;
-  if (bl === 0) return al;
-  const v0 = new Array(bl + 1).fill(0);
-  const v1 = new Array(bl + 1).fill(0);
-  for (let j = 0; j <= bl; j++) v0[j] = j;
-  for (let i = 0; i < al; i++) {
-    v1[0] = i + 1;
-    for (let j = 0; j < bl; j++) {
-      const cost = a[i] === b[j] ? 0 : 1;
-      v1[j + 1] = Math.min(v1[j] + 1, v0[j + 1] + 1, v0[j] + cost);
-    }
-    for (let j = 0; j <= bl; j++) v0[j] = v1[j];
-  }
-  return v1[bl];
+function isCalendarNoise(subject: string, body: string): boolean {
+  const s = (subject || "").toLowerCase();
+  const b = (body || "").trim().toLowerCase();
+
+  const isRsvpSubject =
+    s.includes("accepted:") ||
+    s.includes("invitation:") ||
+    s.includes("declined:") ||
+    s.includes("canceled:") ||
+    s.includes("cancelled:") ||
+    s.includes("updated invitation:");
+
+  const isPlaceholderBody =
+    !b ||
+    b === "no content logged." ||
+    b === "logged ebsta communication event" ||
+    b === "no body text available." ||
+    b === "no email body logged.";
+
+  return isRsvpSubject || isPlaceholderBody;
 }
 
-function similarity(a: string, b: string): number {
-  if (!a || !b) return 0;
-  const dist = levenshtein(a, b);
-  const maxLen = Math.max(a.length, b.length);
-  return maxLen === 0 ? 1 : 1 - dist / maxLen;
+function extractDistinctiveKeywords(accountName: string): string[] {
+  if (!accountName) return [];
+  const cleanTokens = accountName
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const distinctive = cleanTokens.filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+  return distinctive.length > 0 ? distinctive : cleanTokens.filter((w) => w.length > 2);
 }
 
 async function getSalesforceAccessToken() {
@@ -82,29 +92,7 @@ async function getSalesforceAccessToken() {
   }
 }
 
-function isCalendarNoise(subject: string, body: string): boolean {
-  const s = (subject || "").toLowerCase();
-  const b = (body || "").trim().toLowerCase();
-
-  const isRsvpSubject =
-    s.includes("accepted:") ||
-    s.includes("invitation:") ||
-    s.includes("declined:") ||
-    s.includes("canceled:") ||
-    s.includes("cancelled:") ||
-    s.includes("updated invitation:");
-
-  const isPlaceholderBody =
-    !b ||
-    b === "no content logged." ||
-    b === "logged ebsta communication event" ||
-    b === "no body text available." ||
-    b === "no email body logged.";
-
-  return isRsvpSubject || isPlaceholderBody;
-}
-
-async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?: any) {
+async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?: any, logs: string[] = []) {
   let sfCasesMap = new Map<string, any>();
 
   if (sfAuth?.accessToken && sfAuth?.instanceUrl) {
@@ -139,10 +127,11 @@ async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?:
       ];
 
       const uniqueQueryFields = [...new Set(queryFields)].slice(0, 15);
-
       const caseQuery = `SELECT ${uniqueQueryFields.join(
         ", "
       )} FROM Case WHERE Account.Name LIKE '%${accountName}%' ORDER BY CreatedDate DESC LIMIT 100`;
+
+      logs.push(`[SF Cases] Query: ${caseQuery}`);
 
       const res = await fetch(
         `${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(caseQuery)}`,
@@ -156,6 +145,7 @@ async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?:
 
       if (res.ok) {
         const data = await res.json();
+        logs.push(`[SF Cases] Returned ${data.records?.length || 0} cases.`);
         if (data.records && data.records.length > 0) {
           data.records.forEach((c: any) => {
             let bestDesc = "";
@@ -194,7 +184,7 @@ async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?:
         }
       }
     } catch (e) {
-      console.warn("Direct Salesforce Case query fallback:", e);
+      logs.push(`[SF Cases] Error: ${String(e)}`);
     }
   }
 
@@ -206,6 +196,7 @@ async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?:
       .order("date_opened", { ascending: false });
 
     if (!caseErr && cases && cases.length > 0) {
+      logs.push(`[Supabase Cases] Found ${cases.length} cached cases.`);
       return cases.map((c: any) => {
         const matchedSfCase = sfCasesMap.get(c.case_number);
         const rawDesc = c.description && c.description !== "null" ? c.description : "";
@@ -230,13 +221,13 @@ async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?:
       });
     }
   } catch (error) {
-    console.error("Supabase case fetch failed:", error);
+    logs.push(`[Supabase Cases] Error: ${String(error)}`);
   }
 
   return Array.from(sfCasesMap.values());
 }
 
-async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBack: number = 180) {
+async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBack: number = 180, logs: string[] = []) {
   if (sfAuth?.error || !sfAuth?.accessToken) {
     return null;
   }
@@ -252,7 +243,6 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
   let rawContacts: any[] = [];
   let rawOpps: any[] = [];
   let rawEmails: any[] = [];
-  let rawTasks: any[] = [];
 
   try {
     const accountQuery = `SELECT Id, Ebsta_Score__c, LastModifiedDate, Account__c, Account__r.Name FROM Account_Ebsta_Score__c WHERE Account__r.Name LIKE '%${accountName}%' ORDER BY LastModifiedDate DESC LIMIT 1`;
@@ -272,7 +262,7 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
         rawContacts = conJson.records || [];
       }
     } catch (e) {
-      console.warn("Contact EBSTA fetch fallback:", e);
+      logs.push(`[EBSTA Contacts] Warning: ${String(e)}`);
     }
 
     try {
@@ -283,7 +273,7 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
         rawOpps = oppJson.records || [];
       }
     } catch (e) {
-      console.warn("Opportunity EBSTA fetch fallback:", e);
+      logs.push(`[EBSTA Opps] Warning: ${String(e)}`);
     }
 
     try {
@@ -294,46 +284,7 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
         rawEmails = emailJson.records || [];
       }
     } catch (e) {
-      console.warn("EmailMessage query fallback:", e);
-    }
-
-    let taskSelectFields = ["Id", "Subject", "Description", "CreatedDate", "Who.Name", "What.Name"];
-    try {
-      const taskDescribeRes = await fetch(
-        `${sfAuth.instanceUrl}/services/data/v58.0/sobjects/Task/describe`,
-        { headers }
-      );
-      if (taskDescribeRes.ok) {
-        const taskDescribeData = await taskDescribeRes.json();
-        const taskFields = (taskDescribeData.fields || []).map((f: any) => f.name);
-        const extraBodyFields = taskFields.filter((f: string) => {
-          const l = f.toLowerCase();
-          return (
-            l.includes("ebsta") ||
-            l.includes("body") ||
-            l.includes("comment") ||
-            l.includes("detail") ||
-            l.includes("mail") ||
-            l.includes("text")
-          );
-        });
-        taskSelectFields = [...new Set([...taskSelectFields, ...extraBodyFields])].slice(0, 15);
-      }
-    } catch (e) {
-      console.warn("Task describe fallback:", e);
-    }
-
-    try {
-      const taskQuery = `SELECT ${taskSelectFields.join(
-        ", "
-      )} FROM Task WHERE AccountId IN (SELECT Id FROM Account WHERE Name LIKE '%${accountName}%') AND (NOT Subject LIKE 'Accepted:%') AND (NOT Subject LIKE 'Invitation:%') AND (NOT Subject LIKE 'Declined:%') ORDER BY CreatedDate DESC LIMIT 40`;
-      const taskRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(taskQuery)}`, { headers });
-      if (taskRes.ok) {
-        const taskJson = await taskRes.json();
-        rawTasks = taskJson.records || [];
-      }
-    } catch (e) {
-      console.warn("Task query fallback:", e);
+      logs.push(`[EBSTA Emails] Warning: ${String(e)}`);
     }
 
     const uniqueContactsMap = new Map();
@@ -377,267 +328,299 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
       })
       .filter((e: any) => !isCalendarNoise(e.subject, e.body));
 
-    const formattedTaskEmails = rawTasks
-      .map((t: any) => {
-        let bestBody = "";
-        for (const key of Object.keys(t)) {
-          if (
-            key !== "attributes" &&
-            key !== "Id" &&
-            key !== "Subject" &&
-            key !== "CreatedDate" &&
-            key !== "Who" &&
-            key !== "What" &&
-            t[key] &&
-            typeof t[key] === "string"
-          ) {
-            const val = t[key].trim();
-            if (val.length > bestBody.length) {
-              bestBody = val;
-            }
-          }
-        }
-
-        const cleanBody = bestBody.replace(/<[^>]*>?/gm, "").trim();
-
-        return {
-          id: t.Id,
-          subject: t.Subject || "No Subject",
-          from: t.Who?.Name || "N/A",
-          to: t.What?.Name || "N/A",
-          date: t.CreatedDate,
-          body: cleanBody,
-        };
-      })
-      .filter((e: any) => !isCalendarNoise(e.subject, e.body));
-
-    const combinedEmails = [...formattedEmailMessages, ...formattedTaskEmails].slice(0, 20);
-
     return {
       score: accountScoreData?.Ebsta_Score__c ?? null,
       lastActivity: accountScoreData?.LastModifiedDate ?? null,
       accountId: accountScoreData?.Account__c ?? null,
       contacts: Array.from(uniqueContactsMap.values()),
       opportunities: Array.from(uniqueOppsMap.values()),
-      emails: combinedEmails,
+      emails: formattedEmailMessages.slice(0, 20),
     };
   } catch (error) {
-    console.warn("EBSTA fetch error:", error);
+    logs.push(`[EBSTA] Error: ${String(error)}`);
     return null;
   }
 }
 
-async function fetchGongData(
+const GONG_URL_ID_RE = /gong\.io\/call\?id=(\d{6,})/gi;
+
+function extractGongIds(text: string, into: Set<string>) {
+  if (!text) return;
+  for (const m of text.matchAll(GONG_URL_ID_RE)) into.add(m[1]);
+  if (/^\d{15,20}$/.test(text.trim())) into.add(text.trim());
+}
+
+async function fetchGongCallIdsFromSalesforce(
   accountName: string,
-  autoDomains: Set<string>,
-  effectiveDaysBack: number,
-  authHeader: string
-) {
-  let debugGongStatus: number | null = null;
-  let debugGongError = "";
+  sfAuth: any,
+  logs: string[] = []
+): Promise<{ callId: string; title?: string; started?: string; url?: string }[]> {
+  if (!sfAuth?.accessToken || !sfAuth?.instanceUrl) {
+    logs.push("[Gong SF Lookup] Skipped — missing Salesforce OAuth token.");
+    return [];
+  }
+
+  const headers = { Authorization: `Bearer ${sfAuth.accessToken}` };
+  const callMap = new Map<string, { callId: string; title?: string; started?: string; url?: string }>();
+
+  const distinctiveTokens = extractDistinctiveKeywords(accountName);
+  const primaryBrandToken = distinctiveTokens.length > 0 ? distinctiveTokens[0] : accountName;
+
+  // Step 1: Find Account IDs and Opportunity IDs linked to this Account/Brand
+  let accountIds: string[] = [];
+  let opportunityIds: string[] = [];
 
   try {
-    // Build keywords for fuzzy matching: split normalized name into meaningful tokens
-    const normalizedLower = (accountName || "").toLowerCase();
-    const keywords = normalizedLower.split(/\s+/).filter((w) => w.length > 2);
+    const accQuery = `SELECT Id, Name FROM Account WHERE Name LIKE '%${primaryBrandToken}%' OR Name LIKE '%${accountName}%' LIMIT 15`;
+    logs.push(`[Gong SF Lookup] Querying Accounts: ${accQuery}`);
+    const accRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(accQuery)}`, { headers });
 
-    const domainList = Array.from(autoDomains);
-
-    let matchedCallsMap = new Map<string, { callId: string; title: string; parties: string[] }>();
-    let cursor: string | null = null;
-    let hasMore = true;
-    let pageCount = 0;
-    let retry429 = 0;
-
-    const fromDateTime = new Date(
-      Date.now() - effectiveDaysBack * 24 * 60 * 60 * 1000
-    ).toISOString();
-
-    while (
-      hasMore &&
-      matchedCallsMap.size < MAX_CALLS_TO_PROCESS &&
-      pageCount < MAX_CALL_PAGES
-    ) {
-      const params = new URLSearchParams({ fromDateTime });
-
-      if (cursor) {
-        params.set("cursor", cursor);
-      }
-
-      const callsRes = await fetch(
-        `https://api.gong.io/v2/calls?${params.toString()}`,
-        {
-          headers: {
-            Authorization: authHeader,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      if (callsRes.status === 429) {
-        // Back off and retry the SAME cursor instead of bailing — preserves progress.
-        if (retry429 < GONG_MAX_429_RETRIES) {
-          retry429 += 1;
-          const backoff = 1000 * retry429;
-          console.warn(`Gong 429 rate limit — backoff ${backoff}ms (retry ${retry429}/${GONG_MAX_429_RETRIES})`);
-          await sleep(backoff);
-          continue;
-        }
-        debugGongStatus = 429;
-        debugGongError = "Gong API Rate Limit hit (HTTP 429) after retries";
-        console.warn("Gong API 429 Rate Limit exhausted retries.");
-        break;
-      }
-      retry429 = 0;
-
-      if (!callsRes.ok) {
-        debugGongStatus = callsRes.status;
-        const rawErrorText = await callsRes.text();
-        debugGongError = rawErrorText;
-        console.warn("Gong API error:", callsRes.status, rawErrorText);
-        break;
-      }
-
-      pageCount += 1;
-      const callsData = await callsRes.json();
-      const calls = callsData.calls || [];
-
-      for (const c of calls) {
-        if (matchedCallsMap.size >= MAX_CALLS_TO_PROCESS) {
-          break;
-        }
-
-        const title = String(c.title || "").toLowerCase();
-        const rawParties = c.parties || [];
-        const parties = rawParties
-          .map((p: any) => String(p.emailAddress || "").toLowerCase().trim())
-          .filter(Boolean);
-
-        const domainMatch = parties.some((email: string) =>
-          domainList.some((domain) => email.endsWith(`@${domain}`))
-        );
-
-        // Fuzzy/partial matches: title contains normalized tokens
-        const matchingKeywordCount = keywords.filter((keyword: string) =>
-          title.includes(keyword) || similarity(keyword, title) >= 0.72
-        ).length;
-        const keywordMatch = keywords.length > 0 && matchingKeywordCount >= Math.min(1, keywords.length);
-
-        const accountNameMatch = (accountName || "").length > 2 &&
-          (title.includes((accountName || "").toLowerCase()) || similarity((accountName || "").toLowerCase(), title) >= 0.7);
-
-        const emailKeywordMatch = parties.some((email: string) => {
-          const local = email.split("@")[0] || "";
-          return keywords.some((keyword: string) =>
-            local.includes(keyword) || email.includes(keyword) || similarity(keyword, local) >= 0.72
-          );
-        });
-
-        if (
-          domainMatch ||
-          accountNameMatch ||
-          keywordMatch ||
-          emailKeywordMatch
-        ) {
-          matchedCallsMap.set(String(c.id), {
-            callId: String(c.id),
-            title: String(c.title || ""),
-            parties,
-          });
-        }
-      }
-
-      cursor = callsData.records?.cursor || callsData.cursor || null;
-      hasMore = Boolean(cursor && calls.length > 0);
-
-      if (calls.length === 0) {
-        hasMore = false;
-      }
-
-      await sleep(GONG_PAGE_DELAY_MS);
+    if (accRes.ok) {
+      const accData = await accRes.json();
+      accountIds = (accData.records || []).map((r: any) => String(r.Id));
+      logs.push(`[Gong SF Lookup] Found ${accountIds.length} Account ID(s).`);
     }
-
-    if (pageCount >= MAX_CALL_PAGES && matchedCallsMap.size < MAX_CALLS_TO_PROCESS) {
-      console.warn(
-        `Gong scan capped at ${MAX_CALL_PAGES} pages (${matchedCallsMap.size} matches). Narrow daysBack for deeper coverage.`
-      );
-      debugGongError = debugGongError || `Scan capped at ${MAX_CALL_PAGES} pages`;
-    }
-
-    const uniqueCallEntries = Array.from(matchedCallsMap.values()).slice(
-      0,
-      MAX_CALLS_TO_PROCESS
-    );
-
-    if (uniqueCallEntries.length === 0) {
-      return { transcripts: [], debugGongStatus, debugGongError };
-    }
-
-    const uniqueCallIds = uniqueCallEntries.map((item) => item.callId);
-
-    const transcriptBatches: string[][] = [];
-    for (let i = 0; i < uniqueCallIds.length; i += TRANSCRIPT_BATCH_SIZE) {
-      transcriptBatches.push(uniqueCallIds.slice(i, i + TRANSCRIPT_BATCH_SIZE));
-    }
-
-    const transcriptResults = await Promise.all(
-      transcriptBatches.map(async (batch) => {
-        await sleep(150);
-        const transRes = await fetch("https://api.gong.io/v2/calls/transcript", {
-          method: "POST",
-          headers: {
-            Authorization: authHeader,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            filter: {
-              callIds: batch,
-            },
-          }),
-        });
-
-        if (transRes.status === 429 || !transRes.ok) {
-          debugGongStatus = transRes.status;
-          const rawErrorText = await transRes.text();
-          debugGongError = rawErrorText;
-          console.warn("Gong API rate limited or failed:", transRes.status, rawErrorText);
-          return [];
-        }
-
-        const transData = await transRes.json();
-        return Array.isArray(transData.callTranscripts)
-          ? transData.callTranscripts
-          : [];
-      })
-    );
-
-    const gongTranscripts: any[] = [];
-    for (const batchTranscripts of transcriptResults) {
-      gongTranscripts.push(...batchTranscripts);
-    }
-
-    // Attach parties and title metadata back to transcript payload
-    const enrichedTranscripts = gongTranscripts.map((t: any) => {
-      const metadata = matchedCallsMap.get(String(t.callId));
-      return {
-        ...t,
-        title: metadata?.title || "",
-        parties: metadata?.parties || [],
-      };
-    });
-
-    return { transcripts: enrichedTranscripts, debugGongStatus, debugGongError };
-  } catch (error) {
-    debugGongStatus = debugGongStatus ?? 500;
-    debugGongError =
-      typeof error === "string"
-        ? error
-        : error instanceof Error
-        ? error.message
-        : JSON.stringify(error);
-    console.warn("Gong API error:", debugGongStatus, debugGongError);
-    return { transcripts: [], debugGongStatus, debugGongError };
+  } catch (e) {
+    logs.push(`[Gong SF Lookup] Account query error: ${String(e)}`);
   }
+
+  const accountIdClause = accountIds.length > 0 ? accountIds.map((id) => `'${id}'`).join(",") : null;
+
+  try {
+    let oppQuery = "";
+    if (accountIdClause) {
+      oppQuery = `SELECT Id, Name FROM Opportunity WHERE AccountId IN (${accountIdClause}) OR Account.Name LIKE '%${primaryBrandToken}%' OR Name LIKE '%${primaryBrandToken}%' LIMIT 50`;
+    } else {
+      oppQuery = `SELECT Id, Name FROM Opportunity WHERE Account.Name LIKE '%${primaryBrandToken}%' OR Name LIKE '%${primaryBrandToken}%' LIMIT 50`;
+    }
+
+    logs.push(`[Gong SF Lookup] Querying Opportunities: ${oppQuery}`);
+    const oppRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(oppQuery)}`, { headers });
+
+    if (oppRes.ok) {
+      const oppData = await oppRes.json();
+      opportunityIds = (oppData.records || []).map((r: any) => String(r.Id));
+      logs.push(`[Gong SF Lookup] Found ${opportunityIds.length} Opportunity ID(s).`);
+    }
+  } catch (e) {
+    logs.push(`[Gong SF Lookup] Opportunity query error: ${String(e)}`);
+  }
+
+  const opportunityIdClause = opportunityIds.length > 0 ? opportunityIds.map((id) => `'${id}'`).join(",") : null;
+
+  // Step 2: Query Gong Managed Package Custom Objects (checking Account and Opportunity Lookups)
+  const gongObjects = [
+    "Gong__Gong_Call__c",
+    "Gong__Gong_Conversation__c",
+    "Gong__Call__c",
+    "Gong_Call__c",
+    "Gong_Conversation__c",
+  ];
+
+  for (const objName of gongObjects) {
+    try {
+      const descRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/sobjects/${objName}/describe`, { headers });
+      if (!descRes.ok) continue;
+
+      logs.push(`[Gong SF Lookup] Found Gong object schema: ${objName}`);
+      const descData = await descRes.json();
+      const fields = (descData.fields || []).map((f: any) => f.name);
+
+      const titleField = fields.find((f: string) => /title|name|subject/i.test(f)) || "Name";
+      const urlField = fields.find((f: string) => /url|link/i.test(f));
+      const callIdField = fields.find((f: string) => /call.*id|gong_id|call_id/i.test(f));
+      const dateField = fields.find((f: string) => /start|date|created/i.test(f)) || "CreatedDate";
+      const primaryAccField = fields.find((f: string) => /primary.*account|account/i.test(f));
+      const primaryOppField = fields.find((f: string) => /opportunity/i.test(f));
+
+      const conditions: string[] = [];
+      if (accountIdClause && primaryAccField) conditions.push(`${primaryAccField} IN (${accountIdClause})`);
+      if (opportunityIdClause && primaryOppField) conditions.push(`${primaryOppField} IN (${opportunityIdClause})`);
+      conditions.push(`Name LIKE '%${primaryBrandToken}%'`);
+
+      const selectFields = ["Id", titleField, dateField];
+      if (urlField) selectFields.push(urlField);
+      if (callIdField) selectFields.push(callIdField);
+
+      const soql = `SELECT ${[...new Set(selectFields)].join(", ")} FROM ${objName} WHERE ${conditions.join(" OR ")} ORDER BY ${dateField} DESC LIMIT 100`;
+      logs.push(`[Gong SF Lookup] Running SOQL: ${soql}`);
+
+      const queryRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(soql)}`, { headers });
+
+      if (queryRes.ok) {
+        const queryData = await queryRes.json();
+        const records = queryData.records || [];
+        logs.push(`[Gong SF Lookup] ${objName} returned ${records.length} records.`);
+
+        records.forEach((r: any) => {
+          let cid = callIdField ? r[callIdField] : null;
+          const u = urlField ? r[urlField] : null;
+
+          if (!cid && u) {
+            const extracted = new Set<string>();
+            extractGongIds(String(u), extracted);
+            if (extracted.size > 0) cid = Array.from(extracted)[0];
+          }
+
+          if (cid) {
+            callMap.set(String(cid), {
+              callId: String(cid),
+              title: r[titleField] || "Untitled Gong Call",
+              started: r[dateField] || null,
+              url: u || null,
+            });
+          }
+        });
+      }
+    } catch (e) {
+      logs.push(`[Gong SF Lookup] Error querying ${objName}: ${String(e)}`);
+    }
+  }
+
+  // Step 3: Query Gong Junction Objects
+  try {
+    const relDesc = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/sobjects/Gong__Related_Account__c/describe`, { headers });
+    if (relDesc.ok) {
+      const relConditions: string[] = [];
+      if (accountIdClause) relConditions.push(`Gong__Account__c IN (${accountIdClause})`);
+      relConditions.push(`Gong__Account__r.Name LIKE '%${primaryBrandToken}%'`);
+
+      const relSoql = `SELECT Id, Gong__Gong_Call__c, Gong__Gong_Call__r.Name, Gong__Gong_Call__r.Gong__Call_URL__c, Gong__Gong_Call__r.Gong__Call_ID__c, Gong__Gong_Call__r.Gong__Call_Start__c FROM Gong__Related_Account__c WHERE ${relConditions.join(" OR ")} LIMIT 100`;
+      logs.push(`[Gong SF Lookup] Querying Gong__Related_Account__c: ${relSoql}`);
+
+      const relRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(relSoql)}`, { headers });
+      if (relRes.ok) {
+        const relData = await relRes.json();
+        const records = relData.records || [];
+        logs.push(`[Gong SF Lookup] Gong__Related_Account__c returned ${records.length} records.`);
+
+        records.forEach((r: any) => {
+          const callObj = r.Gong__Gong_Call__r;
+          if (callObj) {
+            let cid = callObj.Gong__Call_ID__c || callObj.Gong__Call_Id__c || callObj.Id;
+            const u = callObj.Gong__Call_URL__c;
+
+            if (!cid && u) {
+              const extracted = new Set<string>();
+              extractGongIds(String(u), extracted);
+              if (extracted.size > 0) cid = Array.from(extracted)[0];
+            }
+
+            if (cid) {
+              callMap.set(String(cid), {
+                callId: String(cid),
+                title: callObj.Name || "Gong Call",
+                started: callObj.Gong__Call_Start__c,
+                url: u || null,
+              });
+            }
+          }
+        });
+      }
+    }
+  } catch (e) {
+    logs.push(`[Gong SF Lookup] Junction query error: ${String(e)}`);
+  }
+
+  // Step 4: Fallback Query on Task and Event
+  for (const stdObj of ["Task", "Event"]) {
+    try {
+      const taskConditions: string[] = [];
+      if (accountIdClause) taskConditions.push(`AccountId IN (${accountIdClause})`);
+      if (opportunityIdClause) taskConditions.push(`WhatId IN (${opportunityIdClause})`);
+      taskConditions.push(`Account.Name LIKE '%${primaryBrandToken}%'`);
+
+      const taskQuery = `SELECT Id, Subject, Description, CreatedDate FROM ${stdObj} WHERE (${taskConditions.join(" OR ")}) AND (Description LIKE '%gong.io%' OR Subject LIKE '%Gong%') ORDER BY CreatedDate DESC LIMIT 100`;
+      logs.push(`[Gong SF Lookup] Running ${stdObj} SOQL: ${taskQuery}`);
+
+      const taskRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(taskQuery)}`, { headers });
+
+      if (taskRes.ok) {
+        const taskData = await taskRes.json();
+        const records = taskData.records || [];
+        logs.push(`[Gong SF Lookup] ${stdObj} returned ${records.length} records.`);
+
+        records.forEach((r: any) => {
+          const extracted = new Set<string>();
+          extractGongIds(r.Description || "", extracted);
+          extractGongIds(r.Subject || "", extracted);
+
+          extracted.forEach((cid) => {
+            if (!callMap.has(cid)) {
+              callMap.set(cid, {
+                callId: cid,
+                title: r.Subject || "Gong Call",
+                started: r.CreatedDate,
+              });
+            }
+          });
+        });
+      }
+    } catch (e) {
+      logs.push(`[Gong SF Lookup] ${stdObj} error: ${String(e)}`);
+    }
+  }
+
+  const results = Array.from(callMap.values());
+  logs.push(`[Gong SF Lookup] Total unique Gong Call IDs identified in Salesforce: ${results.length}`);
+  return results;
+}
+
+async function fetchGongTranscriptsByCallIds(callEntries: any[], authHeader: string, logs: string[] = []) {
+  if (!callEntries || callEntries.length === 0) {
+    logs.push("[Gong API] Skipped transcript fetch — 0 Call IDs provided.");
+    return [];
+  }
+
+  const callIdMap = new Map<string, any>();
+  callEntries.forEach((c) => callIdMap.set(String(c.callId), c));
+
+  const uniqueCallIds = Array.from(callIdMap.keys()).slice(0, MAX_CALLS_TO_PROCESS);
+  logs.push(`[Gong API] Fetching full transcripts for ${uniqueCallIds.length} Call ID(s)...`);
+
+  const transcriptBatches: string[][] = [];
+  for (let i = 0; i < uniqueCallIds.length; i += TRANSCRIPT_BATCH_SIZE) {
+    transcriptBatches.push(uniqueCallIds.slice(i, i + TRANSCRIPT_BATCH_SIZE));
+  }
+
+  const transcriptResults = await Promise.all(
+    transcriptBatches.map(async (batch) => {
+      await sleep(150);
+      const transRes = await fetch("https://api.gong.io/v2/calls/transcript", {
+        method: "POST",
+        headers: {
+          Authorization: authHeader,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ filter: { callIds: batch } }),
+      });
+
+      if (!transRes.ok) {
+        logs.push(`[Gong API] Transcript fetch failed (${transRes.status}): ${await transRes.text()}`);
+        return [];
+      }
+
+      const transData = await transRes.json();
+      return Array.isArray(transData.callTranscripts) ? transData.callTranscripts : [];
+    })
+  );
+
+  const gongTranscripts: any[] = [];
+  for (const batch of transcriptResults) {
+    gongTranscripts.push(...batch);
+  }
+
+  logs.push(`[Gong API] Successfully received ${gongTranscripts.length} transcript payload(s).`);
+
+  return gongTranscripts.map((t: any) => {
+    const meta = callIdMap.get(String(t.callId));
+    return {
+      ...t,
+      title: meta?.title || "Untitled Gong Call",
+      started: meta?.started || null,
+      url: meta?.url || null,
+    };
+  });
 }
 
 Deno.serve(async (req) => {
@@ -645,10 +628,12 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  const debugLogs: string[] = [];
+
   try {
-    const { accountName: rawAccountName, daysBack = 180, domain: hintedDomain } = await req.json();
-    // Normalize incoming account name and extract domain if provided
+    const { accountName: rawAccountName, daysBack = 180 } = await req.json();
     const accountName = (rawAccountName || "").toString();
+
     const normalize = (n: string) => {
       if (!n) return "";
       let s = String(n).trim();
@@ -658,20 +643,16 @@ Deno.serve(async (req) => {
       s = s.replace(/\s+/g, " ").trim();
       return s;
     };
+
     const normalizedAccountName = normalize(accountName);
-    const extractedDomain = hintedDomain || (accountName.includes("@") ? accountName.split("@")[1] : /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(accountName) ? accountName : null);
     const effectiveDaysBack = Math.min(Number(daysBack) || 180, MAX_GONG_SEARCH_DAYS);
+
+    debugLogs.push(`[Init] Search target: "${accountName}" (Normalized: "${normalizedAccountName}")`);
 
     if (!accountName || typeof accountName !== "string") {
       return new Response(
-        JSON.stringify({ error: "accountName is required" }),
-        {
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-          status: 400,
-        }
+        JSON.stringify({ error: "accountName is required", debugLogs }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
       );
     }
 
@@ -687,98 +668,64 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     const sfAuth = await getSalesforceAccessToken();
 
-    const cases = await fetchSalesforceCases(supabase, normalizedAccountName, sfAuth);
-    const ebstaData = await fetchEbstaData(normalizedAccountName, sfAuth, effectiveDaysBack);
+    if (sfAuth?.error) {
+      debugLogs.push(`[SF Auth] Error: ${sfAuth.error}`);
+    } else {
+      debugLogs.push(`[SF Auth] Authenticated with ${sfAuth.instanceUrl}`);
+    }
 
-    const ignoredDomains = new Set([
-      "copado.com",
-      "gmail.com",
-      "yahoo.com",
-      "hotmail.com",
-      "outlook.com",
-      "salesforce.com",
-    ]);
+    const cases = await fetchSalesforceCases(supabase, normalizedAccountName, sfAuth, debugLogs);
+    const ebstaData = await fetchEbstaData(normalizedAccountName, sfAuth, effectiveDaysBack, debugLogs);
 
-    const autoDomains = new Set<string>();
-
-    (cases || []).forEach((c: any) => {
-      const email = c.contact_email?.toLowerCase().trim();
-      if (!email || !email.includes("@")) return;
-
-      const parts = email.split("@");
-      if (parts.length !== 2) return;
-
-      const domain = parts[1];
-      if (domain && !ignoredDomains.has(domain)) {
-        autoDomains.add(domain);
-        
-        if (domain.includes("-external.")) {
-          const coreDomain = domain.replace("-external.", ".");
-          autoDomains.add(coreDomain);
-        }
-      }
-    });
+    // 1. Query Salesforce for Account + Opportunity Gong Call IDs
+    const sfGongCallEntries = await fetchGongCallIdsFromSalesforce(normalizedAccountName, sfAuth, debugLogs);
 
     let gongTranscripts: any[] = [];
-    let gongCallCount = 0;
     let debugGongStatus: number | null = null;
     let debugGongError = "";
 
+    // 2. Fetch full transcripts from Gong API
     if (gongAccessKey && gongSecretKey) {
-      const authHeader = "Basic " + btoa(`${gongAccessKey}:${gongSecretKey}`);
-
-      // Pass normalized name and any hinted domain to Gong fetcher
-      const gongData = await fetchGongData(
-        normalizedAccountName,
-        extractedDomain ? new Set([extractedDomain]) : autoDomains,
-        effectiveDaysBack,
-        authHeader
-      );
-
-      gongTranscripts = Array.isArray(gongData?.transcripts) ? gongData.transcripts : [];
-      gongCallCount = gongTranscripts.length;
-      debugGongStatus = gongData?.debugGongStatus ?? null;
-      debugGongError = gongData?.debugGongError ?? "";
+      if (sfGongCallEntries.length > 0) {
+        const authHeader = "Basic " + btoa(`${gongAccessKey}:${gongSecretKey}`);
+        gongTranscripts = await fetchGongTranscriptsByCallIds(sfGongCallEntries, authHeader, debugLogs);
+      } else {
+        debugLogs.push("[Gong API] Skipped transcript fetch — 0 Call IDs found in Salesforce.");
+      }
+    } else {
+      debugLogs.push("[Gong API] Missing Gong credentials in environment secrets.");
     }
+
+    debugLogs.forEach((l) => console.log(l));
 
     return new Response(
       JSON.stringify({
         accountName,
         daysBack: effectiveDaysBack,
         supportCaseCount: cases?.length || 0,
-        gongCallCount,
+        gongCallCount: gongTranscripts.length,
         transcriptCount: gongTranscripts.length,
         gongHttpStatus: debugGongStatus,
         gongErrorMessage: debugGongError,
-        autoDomains: Array.from(autoDomains),
+        debugLogs,
         cases: cases || [],
         salesforceCases: cases || [],
         transcripts: gongTranscripts,
         gongData: gongTranscripts,
         ebstaData,
       }),
-      {
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-        status: 200,
-      }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
     );
   } catch (err: any) {
-    console.error("Customer Briefcase Function Error:", err);
+    console.error("Briefcase Edge Function Error:", err);
+    debugLogs.push(`[Fatal Error] ${err?.message || String(err)}`);
 
     return new Response(
       JSON.stringify({
         error: err?.message || "Unknown error",
+        debugLogs,
       }),
-      {
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-        status: 500,
-      }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 }
     );
   }
 });
