@@ -42,18 +42,6 @@ function isCalendarNoise(subject: string, body: string): boolean {
   return isRsvpSubject || isPlaceholderBody;
 }
 
-function extractDistinctiveKeywords(accountName: string): string[] {
-  if (!accountName) return [];
-  const cleanTokens = accountName
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter(Boolean);
-
-  const distinctive = cleanTokens.filter((w) => w.length > 2 && !STOP_WORDS.has(w));
-  return distinctive.length > 0 ? distinctive : cleanTokens.filter((w) => w.length > 2);
-}
-
 async function getSalesforceAccessToken() {
   const sfInstanceUrl = Deno.env.get("SF_INSTANCE_URL") || Deno.env.get("SALESFORCE_INSTANCE_URL");
   const sfClientId = Deno.env.get("SF_CLIENT_ID");
@@ -91,7 +79,43 @@ async function getSalesforceAccessToken() {
   }
 }
 
-async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?: any, logs: string[] = []) {
+// Strict Account Resolution: Finds exact/specific Account IDs in Salesforce
+async function resolveTargetAccounts(sfAuth: any, accountName: string, logs: string[]) {
+  if (!sfAuth?.accessToken || !sfAuth?.instanceUrl) {
+    return { accountIds: [], matchedNames: [] };
+  }
+
+  const headers = { Authorization: `Bearer ${sfAuth.accessToken}` };
+  const safeName = accountName.replace(/'/g, "\\'");
+
+  // 1. Try exact match or name starting with query
+  let q = `SELECT Id, Name FROM Account WHERE Name = '${safeName}' OR Name LIKE '${safeName}%' LIMIT 15`;
+  logs.push(`[Account Resolver] Querying strict match: ${q}`);
+
+  let res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(q)}`, { headers });
+  let data = res.ok ? await res.json() : null;
+  let records = data?.records || [];
+
+  // 2. If no strict match, strip leading "The" or trailing punctuation and try again
+  if (records.length === 0) {
+    const cleanName = accountName.replace(/^(the|a|an)\s+/i, "").replace(/[.,]/g, "").trim();
+    const safeClean = cleanName.replace(/'/g, "\\'");
+    q = `SELECT Id, Name FROM Account WHERE Name LIKE '${safeClean}%' OR Name LIKE '%${safeClean}%' LIMIT 15`;
+    logs.push(`[Account Resolver] Trying fallback query: ${q}`);
+
+    res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(q)}`, { headers });
+    data = res.ok ? await res.json() : null;
+    records = data?.records || [];
+  }
+
+  const accountIds = records.map((r: any) => String(r.Id));
+  const matchedNames = records.map((r: any) => String(r.Name));
+  logs.push(`[Account Resolver] Resolved ${accountIds.length} account(s): ${matchedNames.join(", ")}`);
+
+  return { accountIds, matchedNames };
+}
+
+async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?: any, accountIds: string[] = [], logs: string[] = []) {
   let sfCasesMap = new Map<string, any>();
 
   if (sfAuth?.accessToken && sfAuth?.instanceUrl) {
@@ -126,10 +150,14 @@ async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?:
       ];
 
       const uniqueQueryFields = [...new Set(queryFields)].slice(0, 15);
-      const caseQuery = `SELECT ${uniqueQueryFields.join(
-        ", "
-      )} FROM Case WHERE Account.Name LIKE '%${accountName}%' ORDER BY CreatedDate DESC LIMIT 100`;
+      
+      let whereClause = `Account.Name LIKE '%${accountName}%'`;
+      if (accountIds.length > 0) {
+        const idIn = accountIds.map((id) => `'${id}'`).join(",");
+        whereClause = `AccountId IN (${idIn})`;
+      }
 
+      const caseQuery = `SELECT ${uniqueQueryFields.join(", ")} FROM Case WHERE ${whereClause} ORDER BY CreatedDate DESC LIMIT 100`;
       logs.push(`[SF Cases] Query: ${caseQuery}`);
 
       const res = await fetch(
@@ -226,7 +254,7 @@ async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?:
   return Array.from(sfCasesMap.values());
 }
 
-async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBack: number = 180, logs: string[] = []) {
+async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBack: number = 180, accountIds: string[] = [], logs: string[] = []) {
   if (sfAuth?.error || !sfAuth?.accessToken) {
     return null;
   }
@@ -243,8 +271,11 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
   let rawOpps: any[] = [];
   let rawEmails: any[] = [];
 
+  const accountIdClause = accountIds.length > 0 ? accountIds.map((id) => `'${id}'`).join(",") : null;
+
   try {
-    const accountQuery = `SELECT Id, Ebsta_Score__c, LastModifiedDate, Account__c, Account__r.Name FROM Account_Ebsta_Score__c WHERE Account__r.Name LIKE '%${accountName}%' ORDER BY LastModifiedDate DESC LIMIT 1`;
+    const accWhere = accountIdClause ? `Account__c IN (${accountIdClause})` : `Account__r.Name LIKE '%${accountName}%'`;
+    const accountQuery = `SELECT Id, Ebsta_Score__c, LastModifiedDate, Account__c, Account__r.Name FROM Account_Ebsta_Score__c WHERE ${accWhere} ORDER BY LastModifiedDate DESC LIMIT 1`;
     const accRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(accountQuery)}`, { headers });
     if (accRes.ok) {
       const accJson = await accRes.json();
@@ -254,7 +285,8 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
     }
 
     try {
-      const contactQuery = `SELECT Id, Ebsta_Score__c, Contact__r.Name, Contact__r.Title, LastModifiedDate FROM Contact_Ebsta_Score__c WHERE Contact__r.Account.Name LIKE '%${accountName}%' ORDER BY Ebsta_Score__c DESC LIMIT 20`;
+      const conWhere = accountIdClause ? `Contact__r.AccountId IN (${accountIdClause})` : `Contact__r.Account.Name LIKE '%${accountName}%'`;
+      const contactQuery = `SELECT Id, Ebsta_Score__c, Contact__r.Name, Contact__r.Title, LastModifiedDate FROM Contact_Ebsta_Score__c WHERE ${conWhere} ORDER BY Ebsta_Score__c DESC LIMIT 20`;
       const conRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(contactQuery)}`, { headers });
       if (conRes.ok) {
         const conJson = await conRes.json();
@@ -265,7 +297,8 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
     }
 
     try {
-      const oppQuery = `SELECT Id, Ebsta_Score__c, Opportunity__r.Name, Opportunity__r.StageName, LastModifiedDate FROM Opportunity_Ebsta_Score__c WHERE Opportunity__r.Account.Name LIKE '%${accountName}%' ORDER BY Ebsta_Score__c DESC LIMIT 20`;
+      const oppWhere = accountIdClause ? `Opportunity__r.AccountId IN (${accountIdClause})` : `Opportunity__r.Account.Name LIKE '%${accountName}%'`;
+      const oppQuery = `SELECT Id, Ebsta_Score__c, Opportunity__r.Name, Opportunity__r.StageName, LastModifiedDate FROM Opportunity_Ebsta_Score__c WHERE ${oppWhere} ORDER BY Ebsta_Score__c DESC LIMIT 20`;
       const oppRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(oppQuery)}`, { headers });
       if (oppRes.ok) {
         const oppJson = await oppRes.json();
@@ -276,7 +309,8 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
     }
 
     try {
-      const emailQuery = `SELECT Id, Subject, FromAddress, ToAddress, MessageDate, TextBody, HtmlBody FROM EmailMessage WHERE (RelatedToId IN (SELECT Id FROM Account WHERE Name LIKE '%${accountName}%') OR RelatedToId IN (SELECT Id FROM Opportunity WHERE Account.Name LIKE '%${accountName}%')) AND (NOT Subject LIKE 'Accepted:%') AND (NOT Subject LIKE 'Invitation:%') AND (NOT Subject LIKE 'Declined:%') AND MessageDate >= ${cutoffDate} ORDER BY MessageDate DESC LIMIT 40`;
+      const emailWhere = accountIdClause ? `RelatedToId IN (${accountIdClause})` : `RelatedToId IN (SELECT Id FROM Account WHERE Name LIKE '%${accountName}%')`;
+      const emailQuery = `SELECT Id, Subject, FromAddress, ToAddress, MessageDate, TextBody, HtmlBody FROM EmailMessage WHERE ${emailWhere} AND (NOT Subject LIKE 'Accepted:%') AND (NOT Subject LIKE 'Invitation:%') AND (NOT Subject LIKE 'Declined:%') AND MessageDate >= ${cutoffDate} ORDER BY MessageDate DESC LIMIT 40`;
       const emailRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(emailQuery)}`, { headers });
       if (emailRes.ok) {
         const emailJson = await emailRes.json();
@@ -351,6 +385,7 @@ function extractGongIds(text: string, into: Set<string>) {
 
 async function fetchGongCallIdsFromSalesforce(
   accountName: string,
+  accountIds: string[],
   sfAuth: any,
   effectiveDaysBack: number = 180,
   logs: string[] = []
@@ -362,59 +397,31 @@ async function fetchGongCallIdsFromSalesforce(
 
   const headers = { Authorization: `Bearer ${sfAuth.accessToken}` };
   const callMap = new Map<string, { callId: string; title?: string; started?: string; url?: string }>();
-
-  const distinctiveTokens = extractDistinctiveKeywords(accountName);
-  const primaryBrandToken = distinctiveTokens.length > 0 ? distinctiveTokens[0] : accountName;
   const cutoffMs = Date.now() - effectiveDaysBack * 24 * 60 * 60 * 1000;
-
-  // Step 1: Find Account IDs (including Parent accounts)
-  let accountIds: string[] = [];
-  try {
-    const accQuery = `SELECT Id, Name, ParentId FROM Account WHERE Name LIKE '%${primaryBrandToken}%' OR Name LIKE '%${accountName}%' LIMIT 30`;
-    logs.push(`[Gong SF Lookup] Querying Accounts: ${accQuery}`);
-    const accRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(accQuery)}`, { headers });
-
-    if (accRes.ok) {
-      const accData = await accRes.json();
-      const records = accData.records || [];
-      records.forEach((r: any) => {
-        if (r.Id) accountIds.push(String(r.Id));
-        if (r.ParentId) accountIds.push(String(r.ParentId));
-      });
-      accountIds = [...new Set(accountIds)];
-      logs.push(`[Gong SF Lookup] Found ${accountIds.length} Account ID(s).`);
-    }
-  } catch (e) {
-    logs.push(`[Gong SF Lookup] Account query error: ${String(e)}`);
-  }
 
   const accountIdClause = accountIds.length > 0 ? accountIds.map((id) => `'${id}'`).join(",") : null;
 
-  // Step 2: Find Opportunity IDs
+  // Step 1: Find Opportunities ONLY linked to the resolved Account IDs
   let opportunityIds: string[] = [];
-  try {
-    let oppQuery = "";
-    if (accountIdClause) {
-      oppQuery = `SELECT Id, Name FROM Opportunity WHERE AccountId IN (${accountIdClause}) OR Account.Name LIKE '%${primaryBrandToken}%' OR Name LIKE '%${primaryBrandToken}%' LIMIT 100`;
-    } else {
-      oppQuery = `SELECT Id, Name FROM Opportunity WHERE Account.Name LIKE '%${primaryBrandToken}%' OR Name LIKE '%${primaryBrandToken}%' LIMIT 100`;
-    }
+  if (accountIdClause) {
+    try {
+      const oppQuery = `SELECT Id, Name FROM Opportunity WHERE AccountId IN (${accountIdClause}) LIMIT 100`;
+      logs.push(`[Gong SF Lookup] Querying Opportunities strictly for target Accounts: ${oppQuery}`);
+      const oppRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(oppQuery)}`, { headers });
 
-    logs.push(`[Gong SF Lookup] Querying Opportunities: ${oppQuery}`);
-    const oppRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(oppQuery)}`, { headers });
-
-    if (oppRes.ok) {
-      const oppData = await oppRes.json();
-      opportunityIds = (oppData.records || []).map((r: any) => String(r.Id));
-      logs.push(`[Gong SF Lookup] Found ${opportunityIds.length} Opportunity ID(s).`);
+      if (oppRes.ok) {
+        const oppData = await oppRes.json();
+        opportunityIds = (oppData.records || []).map((r: any) => String(r.Id));
+        logs.push(`[Gong SF Lookup] Found ${opportunityIds.length} Opportunity ID(s) for target Account(s).`);
+      }
+    } catch (e) {
+      logs.push(`[Gong SF Lookup] Opportunity query error: ${String(e)}`);
     }
-  } catch (e) {
-    logs.push(`[Gong SF Lookup] Opportunity query error: ${String(e)}`);
   }
 
   const opportunityIdClause = opportunityIds.length > 0 ? opportunityIds.map((id) => `'${id}'`).join(",") : null;
 
-  // Step 3: Query Gong Custom Objects using schema field inspection
+  // Step 2: Query Gong Custom Objects strictly for target Account/Opportunity IDs
   const gongObjects = [
     "Gong__Gong_Call__c",
     "Gong__Gong_Conversation__c",
@@ -457,7 +464,7 @@ async function fetchGongCallIdsFromSalesforce(
         oppRefFields.forEach((of: string) => conditions.push(`${of} IN (${opportunityIdClause})`));
       }
 
-      conditions.push(`Name LIKE '%${primaryBrandToken}%'`);
+      if (conditions.length === 0) continue;
 
       const selectFields = [...new Set(["Id", titleField, dateField, ...possibleIdFields])].slice(0, 25);
       const soql = `SELECT ${selectFields.join(", ")} FROM ${objName} WHERE ${conditions.join(" OR ")} ORDER BY ${dateField} DESC LIMIT 100`;
@@ -495,15 +502,13 @@ async function fetchGongCallIdsFromSalesforce(
             });
           }
         });
-      } else {
-        logs.push(`[Gong SF Lookup] ${objName} query failed (${queryRes.status}): ${await queryRes.text()}`);
       }
     } catch (e) {
       logs.push(`[Gong SF Lookup] Error on ${objName}: ${String(e)}`);
     }
   }
 
-  // Step 4: Query Gong Junction Objects
+  // Step 3: Query Gong Junction Objects strictly for target Account/Opportunity IDs
   const junctionObjects = ["Gong__Related_Account__c", "Gong__Related_Opportunity__c"];
   for (const jObj of junctionObjects) {
     try {
@@ -512,7 +517,8 @@ async function fetchGongCallIdsFromSalesforce(
         const jConditions: string[] = [];
         if (accountIdClause && jObj.includes("Account")) jConditions.push(`Gong__Account__c IN (${accountIdClause})`);
         if (opportunityIdClause && jObj.includes("Opportunity")) jConditions.push(`Gong__Opportunity__c IN (${opportunityIdClause})`);
-        jConditions.push(`Name LIKE '%${primaryBrandToken}%'`);
+
+        if (jConditions.length === 0) continue;
 
         const jSoql = `SELECT Id, Gong__Gong_Call__c, Gong__Gong_Call__r.Name, Gong__Gong_Call__r.Gong__Call_URL__c, Gong__Gong_Call__r.Gong__Call_ID__c, Gong__Gong_Call__r.Gong__Call_Start__c, CreatedDate FROM ${jObj} WHERE ${jConditions.join(" OR ")} ORDER BY CreatedDate DESC LIMIT 100`;
         logs.push(`[Gong SF Lookup] Querying ${jObj}: ${jSoql}`);
@@ -557,13 +563,14 @@ async function fetchGongCallIdsFromSalesforce(
     }
   }
 
-  // Step 5: Fallback Query on Task and Event Objects
+  // Step 4: Query Task and Event Objects strictly for target Account/Opportunity IDs
   for (const stdObj of ["Task", "Event"]) {
     try {
       const taskConditions: string[] = [];
       if (accountIdClause) taskConditions.push(`AccountId IN (${accountIdClause})`);
       if (opportunityIdClause) taskConditions.push(`WhatId IN (${opportunityIdClause})`);
-      taskConditions.push(`Account.Name LIKE '%${primaryBrandToken}%'`);
+
+      if (taskConditions.length === 0) continue;
 
       const taskQuery = `SELECT Id, Subject, Description, CreatedDate FROM ${stdObj} WHERE (${taskConditions.join(" OR ")}) AND (Description LIKE '%gong.io%' OR Subject LIKE '%Gong%') ORDER BY CreatedDate DESC LIMIT 100`;
       logs.push(`[Gong SF Lookup] Running ${stdObj} SOQL: ${taskQuery}`);
@@ -600,7 +607,7 @@ async function fetchGongCallIdsFromSalesforce(
   }
 
   const results = Array.from(callMap.values());
-  logs.push(`[Gong SF Lookup] Total unique Gong Call IDs identified in Salesforce for the last ${effectiveDaysBack} days: ${results.length}`);
+  logs.push(`[Gong SF Lookup] Total unique Gong Call IDs identified in Salesforce for target account: ${results.length}`);
   return results;
 }
 
@@ -712,23 +719,27 @@ Deno.serve(async (req) => {
       debugLogs.push(`[SF Auth] Authenticated with ${sfAuth.instanceUrl}`);
     }
 
-    const cases = await fetchSalesforceCases(supabase, normalizedAccountName, sfAuth, debugLogs);
-    const ebstaData = await fetchEbstaData(normalizedAccountName, sfAuth, effectiveDaysBack, debugLogs);
+    // Step 1: Resolve strict Account IDs for target query
+    const { accountIds, matchedNames } = await resolveTargetAccounts(sfAuth, normalizedAccountName, debugLogs);
 
-    // 1. Extract Gong Call IDs strictly within the selected daysBack timeframe
-    const sfGongCallEntries = await fetchGongCallIdsFromSalesforce(normalizedAccountName, sfAuth, effectiveDaysBack, debugLogs);
+    // Step 2: Fetch Support Cases & EBSTA data for target Account IDs
+    const cases = await fetchSalesforceCases(supabase, normalizedAccountName, sfAuth, accountIds, debugLogs);
+    const ebstaData = await fetchEbstaData(normalizedAccountName, sfAuth, effectiveDaysBack, accountIds, debugLogs);
+
+    // Step 3: Extract Gong Call IDs strictly linked to resolved Account/Opportunity IDs
+    const sfGongCallEntries = await fetchGongCallIdsFromSalesforce(normalizedAccountName, accountIds, sfAuth, effectiveDaysBack, debugLogs);
 
     let gongTranscripts: any[] = [];
     let debugGongStatus: number | null = null;
     let debugGongError = "";
 
-    // 2. Fetch full speaker transcripts from Gong API
+    // Step 4: Fetch full speaker transcripts from Gong API
     if (gongAccessKey && gongSecretKey) {
       if (sfGongCallEntries.length > 0) {
         const authHeader = "Basic " + btoa(`${gongAccessKey}:${gongSecretKey}`);
         gongTranscripts = await fetchGongTranscriptsByCallIds(sfGongCallEntries, authHeader, debugLogs);
       } else {
-        debugLogs.push("[Gong API] Skipped transcript fetch — 0 Call IDs found in Salesforce for this timeframe.");
+        debugLogs.push("[Gong API] Skipped transcript fetch — 0 Call IDs found in Salesforce for target Account.");
       }
     } else {
       debugLogs.push("[Gong API] Missing Gong credentials in environment secrets.");
@@ -738,7 +749,7 @@ Deno.serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        accountName,
+        accountName: matchedNames.length > 0 ? matchedNames[0] : accountName,
         daysBack: effectiveDaysBack,
         supportCaseCount: cases?.length || 0,
         gongCallCount: gongTranscripts.length,

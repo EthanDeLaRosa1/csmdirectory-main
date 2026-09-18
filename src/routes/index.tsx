@@ -43,6 +43,7 @@ import { ColorThemePicker } from "@/components/directory/color-theme-picker";
 import { SlackIntakeModal } from "@/components/directory/slack-intake-dialog";
 import { DirectoryStoreProvider, useDirectoryStore } from "@/lib/directory-store";
 import { Button } from "@/components/ui/button";
+import { Menu } from "lucide-react";
 
 function CacheIndicator() {
   const [bytes, setBytes] = useState<number>(0);
@@ -115,6 +116,15 @@ function DirectoryPage() {
   const [starredDepts, setStarredDepts] = useState<string[]>([]);
   const [slackModalOpen, setSlackModalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem("csm_sidebar_open");
+      // default to visible
+      return v === null ? true : v === "1";
+    } catch {
+      return true;
+    }
+  });
   // Note: always render the assistant/search area — removed collapse feature per UX feedback
   // Settings: defaults and preferences
   const [defaultView, setDefaultView] = useState<ViewId>(() => {
@@ -215,6 +225,14 @@ function DirectoryPage() {
       /* ignore */
     }
   }, [autoExpandTriggers]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("csm_sidebar_open", sidebarOpen ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [sidebarOpen]);
 //comment
   const toggleStar = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -249,10 +267,20 @@ function DirectoryPage() {
     <div className="min-h-screen bg-background text-foreground selection:bg-primary/20">
       {/* ⚡ SINGLE INTEGRATED STICKY HEADER ⚡ */}
       <header className="sticky top-0 z-40 w-full bg-background/95 backdrop-blur-sm transition-all">
-        <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
-          
-          {/* 1. Left: Brand Title */}
-          <div className="flex items-center gap-2.5 shrink-0" aria-hidden="true" />
+          <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
+
+          {/* left spacer */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            {!sidebarOpen && (
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="flex items-center gap-2 rounded-md border border-border bg-card/60 p-2 text-muted-foreground hover:bg-accent hover:text-foreground transition"
+                aria-label="Show departments"
+              >
+                <Menu className="size-4" />
+              </button>
+            )}
+          </div>
 
           {/* 2. Middle: Main Navigation Tabs */}
           <nav className="flex items-center gap-1 overflow-x-auto no-scrollbar py-1">
@@ -299,7 +327,14 @@ function DirectoryPage() {
       {/* Main Workspace Layout */}
       <div className="mx-auto flex max-w-[1600px] gap-6 px-4 sm:px-6 pt-4">
         {/* Sidebar Department Navigation */}
-        <nav className="sticky top-18 hidden h-[calc(100vh-80px)] w-56 shrink-0 overflow-y-auto py-2 lg:block pr-2">
+        {sidebarOpen && (
+          <>
+            {/* overlay for small screens */}
+            <div
+              className="fixed inset-0 z-40 bg-black/30 lg:hidden"
+              onClick={() => setSidebarOpen(false)}
+            />
+            <nav className="fixed inset-y-0 left-0 z-50 w-72 border-r border-border bg-card p-4 overflow-y-auto py-2 lg:relative lg:top-14 lg:w-56 lg:block lg:pr-2">
           {starredDepts.length > 0 ? (
             <div className="mb-4">
               <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-500 flex items-center gap-1">
@@ -331,9 +366,16 @@ function DirectoryPage() {
             </div>
           ) : null}
 
-          <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-            Departments
-          </p>
+          <div className="flex items-center justify-between px-3 pb-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Departments</p>
+            <button
+              onClick={() => setSidebarOpen((s) => !s)}
+              className="inline-flex items-center justify-center rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              title={sidebarOpen ? "Hide departments" : "Show departments"}
+            >
+              <Menu className="size-4" />
+            </button>
+          </div>
           <ul className="space-y-1">
             {departments.map((d) => {
               const Icon = ICONS[d.id]!;
@@ -363,7 +405,9 @@ function DirectoryPage() {
               );
             })}
           </ul>
-        </nav>
+            </nav>
+          </>
+        )}
 
         {/* Active Tab View Workspace */}
         <main className="min-w-0 flex-1 pb-8">
