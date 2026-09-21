@@ -88,29 +88,62 @@ async function resolveTargetAccounts(sfAuth: any, accountName: string, logs: str
   const headers = { Authorization: `Bearer ${sfAuth.accessToken}` };
   const safeName = accountName.replace(/'/g, "\\'");
 
-  // 1. Try exact match or name starting with query
-  let q = `SELECT Id, Name FROM Account WHERE Name = '${safeName}' OR Name LIKE '${safeName}%' LIMIT 15`;
-  logs.push(`[Account Resolver] Querying strict match: ${q}`);
+  // 1. First Attempt: Strict Exact Name Match
+  const qExact = `SELECT Id, Name FROM Account WHERE Name = '${safeName}' LIMIT 10`;
+  logs.push(`[Account Resolver] Querying exact match: ${qExact}`);
 
-  let res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(q)}`, { headers });
+  let res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(qExact)}`, { headers });
   let data = res.ok ? await res.json() : null;
   let records = data?.records || [];
 
-  // 2. If no strict match, strip leading "The" or trailing punctuation and try again
+  // Filter in JS for exact case-insensitive match
+  let exactMatches = records.filter(
+    (r: any) => r.Name.toLowerCase().trim() === accountName.toLowerCase().trim()
+  );
+
+  // 2. Second Attempt: Prefix Match if no exact match found
+  if (exactMatches.length === 0) {
+    const qPrefix = `SELECT Id, Name FROM Account WHERE Name LIKE '${safeName}%' LIMIT 15`;
+    logs.push(`[Account Resolver] Trying prefix match: ${qPrefix}`);
+
+    res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(qPrefix)}`, { headers });
+    data = res.ok ? await res.json() : null;
+    records = data?.records || [];
+
+    exactMatches = records.filter(
+      (r: any) => r.Name.toLowerCase().trim() === accountName.toLowerCase().trim()
+    );
+  }
+
+  // 3. Third Attempt: Cleaned Name Search
   if (records.length === 0) {
     const cleanName = accountName.replace(/^(the|a|an)\s+/i, "").replace(/[.,]/g, "").trim();
     const safeClean = cleanName.replace(/'/g, "\\'");
-    q = `SELECT Id, Name FROM Account WHERE Name LIKE '${safeClean}%' OR Name LIKE '%${safeClean}%' LIMIT 15`;
-    logs.push(`[Account Resolver] Trying fallback query: ${q}`);
+    const qClean = `SELECT Id, Name FROM Account WHERE Name = '${safeClean}' OR Name LIKE '${safeClean}%' LIMIT 15`;
+    logs.push(`[Account Resolver] Trying cleaned query: ${qClean}`);
 
-    res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(q)}`, { headers });
+    res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(qClean)}`, { headers });
     data = res.ok ? await res.json() : null;
     records = data?.records || [];
+
+    exactMatches = records.filter(
+      (r: any) => r.Name.toLowerCase().trim() === cleanName.toLowerCase().trim()
+    );
   }
 
-  const accountIds = records.map((r: any) => String(r.Id));
-  const matchedNames = records.map((r: any) => String(r.Name));
-  logs.push(`[Account Resolver] Resolved ${accountIds.length} account(s): ${matchedNames.join(", ")}`);
+  // If exact match found, use ONLY exact match(es).
+  // Otherwise, sort by string length so root account ("S&P Global") wins over ("S&P Global Ratings Japan")
+  let targetRecords: any[] = [];
+  if (exactMatches.length > 0) {
+    targetRecords = exactMatches;
+  } else if (records.length > 0) {
+    records.sort((a: any, b: any) => a.Name.length - b.Name.length);
+    targetRecords = [records[0]]; // Take shortest name match
+  }
+
+  const accountIds = targetRecords.map((r: any) => String(r.Id));
+  const matchedNames = targetRecords.map((r: any) => String(r.Name));
+  logs.push(`[Account Resolver] Resolved ${accountIds.length} target account(s): ${matchedNames.join(", ")}`);
 
   return { accountIds, matchedNames };
 }
