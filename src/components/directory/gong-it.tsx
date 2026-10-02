@@ -30,7 +30,7 @@ const { saveAs } = (fileSaver as any) || { saveAs: undefined };
 import { supabase } from "@/lib/supabase";
 import { collectBriefcase, normalizeAccountName, extractDomainFromQuery } from "@/lib/paz/api";
 
-const SAMPLE_ACCOUNTS = ["Brenntag", "Jeppesen", "Travelers", "Copado", "The Nebraska Medical Center"];
+const SAMPLE_ACCOUNTS = ["Brenntag North America", "Amtrak", "Travelers", "Wizards of the Coast, Inc", "The Nebraska Medical Center"];
 
 const getChronoTimestamp = (value: unknown): number => {
   if (!value) return 0;
@@ -141,6 +141,7 @@ export const GongItTab = () => {
   const [animatedPlaceholder, setAnimatedPlaceholder] = useState("Jeppesen");
   const [daysBack, setDaysBack] = useState<number>(180);
   const [showEbstaCard, setShowEbstaCard] = useState<boolean>(true);
+  const [showContactsCard, setShowContactsCard] = useState<boolean>(true);
   const [showCasesCard, setShowCasesCard] = useState<boolean>(true);
   const [showGongCard, setShowGongCard] = useState<boolean>(true);
 
@@ -290,7 +291,6 @@ export const GongItTab = () => {
 
     try {
       const searchTerm = trimmed;
-      // Prefer client wrapper that normalizes and passes domain hints
       let data: any = null;
       try {
         data = await collectBriefcase(searchTerm, daysBack);
@@ -309,7 +309,7 @@ export const GongItTab = () => {
       const directError = Boolean(data?.error);
       setHasError(directError);
       if (directError) {
-        console.error("Invocation Error:", error);
+        console.error("Invocation Error:", data?.error);
         setErrorMsg("Notice: Unable to pull live Salesforce cases. Check function logs.");
         setResult(null);
         return;
@@ -345,6 +345,7 @@ export const GongItTab = () => {
         accountName: data.accountName || trimmed,
         cases: sortCasesNewestFirst(Array.from(uniqueCasesMap.values())),
         salesforceCases: sfCases,
+        contacts: data.contacts || [],
         transcripts: gongCalls,
         ebstaData: ebsta,
       };
@@ -438,7 +439,6 @@ export const GongItTab = () => {
     downloadJsonArtifact(`${safeName}-support-cases.json`, payload);
   };
 
-  // Client-side fallback in case the edge function response predates gongMarkdown.
   const buildGongMarkdownLocally = (name: string, transcripts: any[]) => {
     let md = `# Gong Call Transcripts: ${name}\n\n*${transcripts.length} call(s) matched · exported ${new Date().toLocaleDateString()}*\n\n`;
     sortGongTranscriptsNewestFirst(transcripts).forEach((t: any) => {
@@ -528,7 +528,24 @@ export const GongItTab = () => {
       md += `------------------------------------------------------------\n\n`;
     }
 
-    md += `## 3. SUPPORT CASES REPORT (${result.cases.length} Unique Cases)\n\n`;
+    md += `## 3. KEY CONTACTS DIRECTORY (${result.contacts?.length || 0} Contacts)\n\n`;
+    if (!result.contacts || result.contacts.length === 0) {
+      md += `*No key contacts recorded for this account.*\n\n`;
+    } else {
+      md += `| Contact Name | Title | Email | Copado Role | Key Contact | CSM Key Contact | Last Activity |\n`;
+      md += `| :--- | :--- | :--- | :--- | :---: | :---: | :---: |\n`;
+
+      result.contacts.forEach((c: any) => {
+        const keyContact = c.isKeyContact ? "Yes" : "No";
+        const csmKeyContact = c.isCsmKeyContact ? "Yes" : "No";
+        const emailLink = c.email !== "N/A" ? `[${c.email}](mailto:${c.email})` : "N/A";
+
+        md += `| ${c.name} | ${c.title} | ${emailLink} | ${c.copadoRole} | ${keyContact} | ${csmKeyContact} | ${c.lastActivity} |\n`;
+      });
+      md += `\n------------------------------------------------------------\n\n`;
+    }
+
+    md += `## 4. SUPPORT CASES REPORT (${result.cases.length} Unique Cases)\n\n`;
     if (result.cases.length === 0) {
       md += `*No active support cases recorded for this account.*\n\n`;
     } else {
@@ -548,7 +565,7 @@ export const GongItTab = () => {
 
     md += `---\n\n`;
 
-    md += `## 4. GONG CALL TRANSCRIPTS (${result.transcripts?.length || 0} Calls Matched)\n\n`;
+    md += `## 5. GONG CALL TRANSCRIPTS (${result.transcripts?.length || 0} Calls Matched)\n\n`;
     if (!result.transcripts || result.transcripts.length === 0) {
       md += `*No recent Gong call transcripts matched this account.*\n\n`;
     } else {
@@ -598,7 +615,6 @@ export const GongItTab = () => {
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-8 relative">
-      {/* Hero Section */}
       <div className="relative text-center space-y-3 pt-4 pb-2">
         <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold shadow-sm">
           {isChiikawaTheme ? <Heart className="w-3.5 h-3.5 text-primary fill-primary animate-pulse" /> : <Sparkles className="w-3.5 h-3.5 text-primary animate-pulse" />}
@@ -609,7 +625,7 @@ export const GongItTab = () => {
           <span>What account are we analyzing today?</span>
         </h1>
         <p className="text-muted-foreground text-sm max-w-xl mx-auto leading-relaxed">
-          Pulls live support cases, EBSTA relationship scores & email transcripts, and Gong call transcripts into a single NotebookLM Briefcase.
+          Pulls live support cases, Key Contacts, EBSTA relationship scores & email transcripts, and Gong call transcripts into a single NotebookLM Briefcase.
         </p>
 
         {isChiikawaTheme && (
@@ -757,6 +773,9 @@ export const GongItTab = () => {
                     <Activity className="w-3.5 h-3.5 text-current" /> EBSTA Score: {extractedEbstaScore}/100
                   </span>
                 )}
+                <span className="flex items-center gap-1.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-md font-mono">
+                  <Users className="w-3.5 h-3.5 text-indigo-500" /> {result.contacts?.length || 0} Contacts
+                </span>
                 <span className="flex items-center gap-1.5 bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 px-2.5 py-1 rounded-md font-mono">
                   <FileText className="w-3.5 h-3.5 text-blue-500" /> {result.cases?.length || 0} Unique Cases
                 </span>
@@ -805,7 +824,87 @@ export const GongItTab = () => {
             </div>
           </div>
 
-          {/* EBSTA Relationship & Stakeholder Intelligence Card */}
+          {/* Key Contacts Card */}
+          <div className="bg-card border border-border p-5 rounded-2xl space-y-4 shadow-sm animate-in fade-in duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-border gap-3">
+              <div className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-indigo-500" />
+                <h3 className="text-foreground font-bold text-base">Key Contacts Directory</h3>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowContactsCard((curr) => !curr)}
+                  className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:border-primary/60 transition-colors"
+                >
+                  {showContactsCard ? "Hide Contacts" : "Show Contacts"}
+                </button>
+
+                <span className="bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-xs px-2.5 py-1 rounded-md font-mono font-bold border border-indigo-500/20">
+                  {result.contacts?.length || 0} Total
+                </span>
+              </div>
+            </div>
+
+            {showContactsCard && (
+              <div className="max-h-[380px] overflow-y-auto space-y-2.5 pr-1">
+                {!result.contacts || result.contacts.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic">No key contacts found for this account.</p>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {result.contacts.map((c: any, i: number) => (
+                      <div key={i} className="bg-muted/30 border border-border/60 p-3 rounded-xl space-y-2 hover:border-primary/30 transition-colors">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                              {c.name}
+                            </h4>
+                            <p className="text-[10px] text-muted-foreground line-clamp-1">{c.title}</p>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            {c.isCsmKeyContact && (
+                              <span className="text-[9px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                                CSM Key
+                              </span>
+                            )}
+                            {c.isKeyContact && (
+                              <span className="text-[9px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded">
+                                Key
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1 text-[11px] pt-1.5 border-t border-border/40 font-mono">
+                          {c.email !== "N/A" && (
+                            <div className="flex items-center gap-1.5 text-muted-foreground truncate">
+                              <Mail className="w-3 h-3 text-primary shrink-0" />
+                              <a href={`mailto:${c.email}`} className="hover:underline text-foreground truncate">
+                                {c.email}
+                              </a>
+                            </div>
+                          )}
+                          {c.copadoRole !== "N/A" && (
+                            <p className="text-muted-foreground text-[10px]">
+                              <span className="font-semibold text-foreground">Copado Role:</span> {c.copadoRole}
+                            </p>
+                          )}
+                          <p className="text-muted-foreground text-[10px] flex items-center gap-1 pt-0.5">
+                            <Clock className="w-2.5 h-2.5 text-muted-foreground" />
+                            <span>Last Activity: {c.lastActivity}</span>
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* EBSTA Card */}
           {result?.ebstaData && (
             <div className="bg-card border border-border p-5 rounded-2xl space-y-4 shadow-sm animate-in fade-in duration-200">
               <div className="flex items-center justify-between pb-3 border-b border-border gap-3">
@@ -846,9 +945,7 @@ export const GongItTab = () => {
 
               {showEbstaCard && (
                 <>
-                  {/* Fixed UI Layout Bug: Added items-start to prevent flex stretching */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-                    {/* Top Engaged Contacts */}
                     <div className="bg-muted/30 border border-border/60 p-4 rounded-xl space-y-2">
                       <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                         Top Engaged Stakeholders ({result.ebstaData.contacts?.length || 0})
@@ -872,7 +969,6 @@ export const GongItTab = () => {
                       )}
                     </div>
 
-                    {/* Opportunity Deal Health */}
                     <div className="bg-muted/30 border border-border/60 p-4 rounded-xl space-y-2">
                       <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                         Opportunity Pipeline Health ({result.ebstaData.opportunities?.length || 0})
@@ -897,7 +993,6 @@ export const GongItTab = () => {
                     </div>
                   </div>
 
-                  {/* EBSTA Logged Email Repository Transcripts */}
                   {result.ebstaData.emails && result.ebstaData.emails.length > 0 && (
                     <div className="pt-3 border-t border-border space-y-3">
                       <div className="flex items-center gap-2">
