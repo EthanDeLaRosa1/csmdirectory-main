@@ -79,7 +79,6 @@ async function getSalesforceAccessToken() {
   }
 }
 
-// Strict Account Resolution: Finds exact/specific Account IDs in Salesforce
 async function resolveTargetAccounts(sfAuth: any, accountName: string, logs: string[]) {
   if (!sfAuth?.accessToken || !sfAuth?.instanceUrl) {
     return { accountIds: [], matchedNames: [] };
@@ -88,7 +87,7 @@ async function resolveTargetAccounts(sfAuth: any, accountName: string, logs: str
   const headers = { Authorization: `Bearer ${sfAuth.accessToken}` };
   const safeName = accountName.replace(/'/g, "\\'");
 
-  const qExact = `SELECT Id, Name FROM Account WHERE Name = '${safeName}' LIMIT 10`;
+  const qExact = `SELECT Id, Name, Type, AnnualRevenue, LastModifiedDate FROM Account WHERE Name = '${safeName}' LIMIT 10`;
   logs.push(`[Account Resolver] Querying exact match: ${qExact}`);
 
   let res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(qExact)}`, { headers });
@@ -100,7 +99,7 @@ async function resolveTargetAccounts(sfAuth: any, accountName: string, logs: str
   );
 
   if (exactMatches.length === 0) {
-    const qPrefix = `SELECT Id, Name FROM Account WHERE Name LIKE '${safeName}%' LIMIT 15`;
+    const qPrefix = `SELECT Id, Name, Type, AnnualRevenue, LastModifiedDate FROM Account WHERE Name LIKE '${safeName}%' LIMIT 15`;
     logs.push(`[Account Resolver] Trying prefix match: ${qPrefix}`);
 
     res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(qPrefix)}`, { headers });
@@ -115,7 +114,7 @@ async function resolveTargetAccounts(sfAuth: any, accountName: string, logs: str
   if (records.length === 0) {
     const cleanName = accountName.replace(/^(the|a|an)\s+/i, "").replace(/[.,]/g, "").trim();
     const safeClean = cleanName.replace(/'/g, "\\'");
-    const qClean = `SELECT Id, Name FROM Account WHERE Name = '${safeClean}' OR Name LIKE '${safeClean}%' LIMIT 15`;
+    const qClean = `SELECT Id, Name, Type, AnnualRevenue, LastModifiedDate FROM Account WHERE Name = '${safeClean}' OR Name LIKE '${safeClean}%' LIMIT 15`;
     logs.push(`[Account Resolver] Trying cleaned query: ${qClean}`);
 
     res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(qClean)}`, { headers });
@@ -127,20 +126,34 @@ async function resolveTargetAccounts(sfAuth: any, accountName: string, logs: str
     );
   }
 
-  let targetRecords: any[] = [];
-  if (exactMatches.length > 0) {
-    targetRecords = exactMatches;
-  } else if (records.length > 0) {
-    records.sort((a: any, b: any) => a.Name.length - b.Name.length);
-    targetRecords = [records[0]];
+  let targetRecords: any[] = exactMatches.length > 0 ? exactMatches : records;
+
+  // Rank active customer accounts first, then highest revenue, then recently modified
+  if (targetRecords.length > 1) {
+    targetRecords.sort((a: any, b: any) => {
+      const aIsCust = (a.Type || "").toLowerCase() === "customer" ? 1 : 0;
+      const bIsCust = (b.Type || "").toLowerCase() === "customer" ? 1 : 0;
+      if (bIsCust !== aIsCust) return bIsCust - aIsCust;
+
+      const aExact = a.Name.toLowerCase().trim() === accountName.toLowerCase().trim() ? 1 : 0;
+      const bExact = b.Name.toLowerCase().trim() === accountName.toLowerCase().trim() ? 1 : 0;
+      if (bExact !== aExact) return bExact - aExact;
+
+      const aRev = Number(a.AnnualRevenue) || 0;
+      const bRev = Number(b.AnnualRevenue) || 0;
+      if (bRev !== aRev) return bRev - aRev;
+
+      return new Date(b.LastModifiedDate || 0).getTime() - new Date(a.LastModifiedDate || 0).getTime();
+    });
   }
 
   const accountIds = targetRecords.map((r: any) => String(r.Id));
   const matchedNames = targetRecords.map((r: any) => String(r.Name));
-  logs.push(`[Account Resolver] Resolved ${accountIds.length} target account(s): ${matchedNames.join(", ")}`);
+  logs.push(`[Account Resolver] Resolved target account: ${matchedNames[0]} (${accountIds[0]})`);
 
   return { accountIds, matchedNames };
 }
+
 
 async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?: any, accountIds: string[] = [], logs: string[] = []) {
   let sfCasesMap = new Map<string, any>();
@@ -348,27 +361,68 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
   };
 
   const cutoffDate = new Date(Date.now() - effectiveDaysBack * 24 * 60 * 60 * 1000).toISOString();
+  const accountIdClause = accountIds.length > 0 ? accountIds.map((id) => `'${id}'`).join(",") : null;
+  const primaryAccountId = accountIds[0] || null;
 
+  let directAccountScore: number | null = null;
   let accountScoreData: any = null;
   let rawContacts: any[] = [];
   let rawOpps: any[] = [];
   let rawEmails: any[] = [];
 
-  const accountIdClause = accountIds.length > 0 ? accountIds.map((id) => `'${id}'`).join(",") : null;
+    try {
+    const primaryAccountId = accountIds[0] || null;
 
-  try {
-    const accWhere = accountIdClause ? `Account__c IN (${accountIdClause})` : `Account__r.Name LIKE '%${accountName.replace(/'/g, "\\'")}%'`;
-    const accountQuery = `SELECT Id, Ebsta_Score__c, LastModifiedDate, Account__c, Account__r.Name FROM Account_Ebsta_Score__c WHERE ${accWhere} ORDER BY LastModifiedDate DESC LIMIT 1`;
+    // 1. Check if the Account itself has the live Ebsta score
+    let directAccountScore: number | null = null;
+    if (primaryAccountId) {
+      try {
+        const accCheckRes = await fetch(
+          `${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(
+            `SELECT Id, Ebsta_Score__c FROM Account WHERE Id = '${primaryAccountId}' LIMIT 1`
+          )}`,
+          { headers }
+        );
+        if (accCheckRes.ok) {
+          const accCheckData = await accCheckRes.json();
+          const scoreVal = accCheckData.records?.[0]?.Ebsta_Score__c;
+          if (scoreVal != null) {
+            directAccountScore = Number(scoreVal);
+            logs.push(`[EBSTA] Found live Account.Ebsta_Score__c: ${directAccountScore}`);
+          }
+        }
+      } catch (e) {
+        logs.push(`[EBSTA] Direct Account score check skipped: ${String(e)}`);
+      }
+    }
+
+    // 2. Query snapshot history ordered by CreatedDate DESC (most recently created score)
+    const accWhere = primaryAccountId
+      ? `Account__c = '${primaryAccountId}'`
+      : accountIdClause
+      ? `Account__c IN (${accountIdClause})`
+      : `Account__r.Name LIKE '%${accountName.replace(/'/g, "\\'")}%'`;
+
+    const accountQuery = `SELECT Id, Ebsta_Score__c, CreatedDate, LastModifiedDate, Account__c, Account__r.Name FROM Account_Ebsta_Score__c WHERE ${accWhere} ORDER BY CreatedDate DESC LIMIT 1`;
+    logs.push(`[EBSTA] Snapshot query: ${accountQuery}`);
+
     const accRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(accountQuery)}`, { headers });
     if (accRes.ok) {
       const accJson = await accRes.json();
       if (accJson.records && accJson.records.length > 0) {
         accountScoreData = accJson.records[0];
+        logs.push(`[EBSTA] Latest created snapshot: ${accountScoreData.Ebsta_Score__c}`);
       }
     }
 
+
     try {
-      const conWhere = accountIdClause ? `Contact__r.AccountId IN (${accountIdClause})` : `Contact__r.Account.Name LIKE '%${accountName.replace(/'/g, "\\'")}%'`;
+      const conWhere = primaryAccountId
+        ? `Contact__r.AccountId = '${primaryAccountId}'`
+        : accountIdClause
+        ? `Contact__r.AccountId IN (${accountIdClause})`
+        : `Contact__r.Account.Name LIKE '%${accountName.replace(/'/g, "\\'")}%'`;
+
       const contactQuery = `SELECT Id, Ebsta_Score__c, Contact__r.Name, Contact__r.Title, LastModifiedDate FROM Contact_Ebsta_Score__c WHERE ${conWhere} ORDER BY Ebsta_Score__c DESC LIMIT 20`;
       const conRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(contactQuery)}`, { headers });
       if (conRes.ok) {
@@ -380,7 +434,12 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
     }
 
     try {
-      const oppWhere = accountIdClause ? `Opportunity__r.AccountId IN (${accountIdClause})` : `Opportunity__r.Account.Name LIKE '%${accountName.replace(/'/g, "\\'")}%'`;
+      const oppWhere = primaryAccountId
+        ? `Opportunity__r.AccountId = '${primaryAccountId}'`
+        : accountIdClause
+        ? `Opportunity__r.AccountId IN (${accountIdClause})`
+        : `Opportunity__r.Account.Name LIKE '%${accountName.replace(/'/g, "\\'")}%'`;
+
       const oppQuery = `SELECT Id, Ebsta_Score__c, Opportunity__r.Name, Opportunity__r.StageName, LastModifiedDate FROM Opportunity_Ebsta_Score__c WHERE ${oppWhere} ORDER BY Ebsta_Score__c DESC LIMIT 20`;
       const oppRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(oppQuery)}`, { headers });
       if (oppRes.ok) {
@@ -392,7 +451,12 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
     }
 
     try {
-      const emailWhere = accountIdClause ? `RelatedToId IN (${accountIdClause})` : `RelatedToId IN (SELECT Id FROM Account WHERE Name LIKE '%${accountName.replace(/'/g, "\\'")}%')`;
+      const emailWhere = primaryAccountId
+        ? `RelatedToId = '${primaryAccountId}'`
+        : accountIdClause
+        ? `RelatedToId IN (${accountIdClause})`
+        : `RelatedToId IN (SELECT Id FROM Account WHERE Name LIKE '%${accountName.replace(/'/g, "\\'")}%')`;
+
       const emailQuery = `SELECT Id, Subject, FromAddress, ToAddress, MessageDate, TextBody, HtmlBody FROM EmailMessage WHERE ${emailWhere} AND (NOT Subject LIKE 'Accepted:%') AND (NOT Subject LIKE 'Invitation:%') AND (NOT Subject LIKE 'Declined:%') AND MessageDate >= ${cutoffDate} ORDER BY MessageDate DESC LIMIT 40`;
       const emailRes = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(emailQuery)}`, { headers });
       if (emailRes.ok) {
@@ -445,8 +509,8 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
       .filter((e: any) => !isCalendarNoise(e.subject, e.body));
 
     return {
-      score: accountScoreData?.Ebsta_Score__c ?? null,
-      lastActivity: accountScoreData?.LastModifiedDate ?? null,
+      score: directAccountScore ?? accountScoreData?.Ebsta_Score__c ?? null,
+      lastActivity: accountScoreData?.CreatedDate ?? accountScoreData?.LastModifiedDate ?? null,
       accountId: accountScoreData?.Account__c ?? null,
       contacts: Array.from(uniqueContactsMap.values()),
       opportunities: Array.from(uniqueOppsMap.values()),
@@ -456,14 +520,6 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
     logs.push(`[EBSTA] Error: ${String(error)}`);
     return null;
   }
-}
-
-const GONG_URL_ID_RE = /gong\.io\/call\?id=(\d{6,})/gi;
-
-function extractGongIds(text: string, into: Set<string>) {
-  if (!text) return;
-  for (const m of text.matchAll(GONG_URL_ID_RE)) into.add(m[1]);
-  if (/^\d{15,20}$/.test(text.trim())) into.add(text.trim());
 }
 
 async function fetchGongCallIdsFromSalesforce(
@@ -746,6 +802,234 @@ async function fetchGongTranscriptsByCallIds(callEntries: any[], authHeader: str
   });
 }
 
+async function fetchSalesforceProductFootprint(
+  sfAuth: any,
+  accountIds: string[] = [],
+  accountName: string,
+  logs: string[] = []
+) {
+  if (!sfAuth?.accessToken || !sfAuth?.instanceUrl) {
+    logs.push("[SF Footprint] Skipped — missing Salesforce OAuth token.");
+    return null;
+  }
+
+  const headers = { Authorization: `Bearer ${sfAuth.accessToken}` };
+
+  try {
+    // 1. Inspect Account metadata to find exact API field names
+    const descRes = await fetch(
+      `${sfAuth.instanceUrl}/services/data/v58.0/sobjects/Account/describe`,
+      { headers }
+    );
+
+    if (!descRes.ok) {
+      logs.push(`[SF Footprint] Account describe failed: ${descRes.statusText}`);
+      return null;
+    }
+
+    const descData = await descRes.json();
+    const fields: { name: string; label: string; type: string }[] = descData.fields || [];
+
+    // Prioritized field finder that rejects "available", "remaining", and "used" counters
+    const findBestField = (
+      exactLabels: string[],
+      exactNames: string[],
+      partialTerms: string[] = [],
+      excludeTerms: string[] = []
+    ) => {
+      for (const f of fields) {
+        const l = (f.label || "").toLowerCase().trim();
+        if (exactLabels.some((el) => l === el.toLowerCase())) return f.name;
+      }
+      for (const f of fields) {
+        const n = (f.name || "").toLowerCase().trim();
+        if (exactNames.some((en) => n === en.toLowerCase())) return f.name;
+      }
+      for (const f of fields) {
+        const l = (f.label || "").toLowerCase().trim();
+        const n = (f.name || "").toLowerCase().trim();
+        if (excludeTerms.some((ex) => l.includes(ex) || n.includes(ex))) continue;
+        if (partialTerms.some((term) => l.includes(term) || n.includes(term))) return f.name;
+      }
+      return null;
+    };
+
+    // CICD Information Fields
+    const cicdAdminSeats = findBestField(
+      ["Admin Seats", "CICD Admin Seats", "CI/CD Admin Seats", "Copado Admin Seats"],
+      ["Admin_Seats__c", "CICD_Admin_Seats__c", "Copado_Admin_Seats__c"],
+      ["admin seat", "admin_seat"],
+      ["available", "remaining", "assigned", "used", "inactive", "free"]
+    );
+
+    const cicdUserSeats = findBestField(
+      ["User Seats", "CI/CD User Seats", "CICD User Seats", "Copado User Seats", "User Licenses"],
+      ["User_Seats__c", "CICD_User_Seats__c", "Copado_User_Seats__c", "User_Licenses__c"],
+      ["user seat", "user_seat", "user license"],
+      ["crt", "robotic", "available", "remaining", "assigned", "used", "inactive", "free"]
+    );
+
+    const successPlan = findBestField(
+      ["Success Plan", "Copado Success Plan"],
+      ["Success_Plan__c", "Copado_Success_Plan__c"],
+      ["success plan", "success_plan"]
+    );
+
+    const cicdEdition = findBestField(
+      ["CICD Edition", "CI/CD Edition", "Copado Edition"],
+      ["CICD_Edition__c", "Edition__c", "Copado_Edition__c"],
+      ["cicd edition", "edition"]
+    );
+
+    // Add-on Product Fields
+    const dataDeployer = findBestField(["Data Deployer"], ["Data_Deployer__c"], ["data deploy"]);
+    const complianceHub = findBestField(["Compliance Hub"], ["Compliance_Hub__c"], ["compliance"]);
+    const vsm = findBestField(
+      ["Value Stream Maps (VSM)", "Value Stream Maps"],
+      ["Value_Stream_Maps__c", "VSM__c"],
+      ["value stream", "vsm"]
+    );
+    const cvc = findBestField(
+      ["Copado Version Control (CVC)", "Copado Version Control"],
+      ["Copado_Version_Control__c", "CVC__c"],
+      ["version control", "cvc"]
+    );
+
+    // CRT (Copado Robotic Testing) Fields
+    const crtUserSeats = findBestField(
+      ["CRT User Seats", "Robotic Testing User Seats", "CRT Seats"],
+      ["CRT_User_Seats__c", "Robotic_Testing_User_Seats__c", "CRT_Seats__c", "CRT_Licenses__c"],
+      ["crt user seat", "robotic user seat", "crt seat"],
+      ["available", "remaining", "assigned", "used", "inactive", "free"]
+    );
+
+    const crtEdition = findBestField(
+      ["CRT Edition", "Robotic Testing Edition"],
+      ["CRT_Edition__c", "Robotic_Edition__c"],
+      ["crt edition", "robotic edition"]
+    );
+
+    // AI Platform Fields
+    const aiUserSeats = findBestField(
+      ["AI User Seats", "Copado AI User Seats", "AI Seats"],
+      ["AI_User_Seats__c", "Copado_AI_User_Seats__c", "AI_Seats__c"],
+      ["ai user seat", "ai seat"]
+    );
+
+    const aiEdition = findBestField(
+      ["AI Edition", "Copado AI Edition"],
+      ["AI_Edition__c", "Copado_AI_Edition__c"],
+      ["ai edition"]
+    );
+
+    const aiPlatform = findBestField(
+      ["AI Platform", "Copado AI Platform", "AI Platform Status"],
+      ["AI_Platform__c", "Copado_AI_Platform__c", "AI_Platform_Status__c", "Copado_AI__c"],
+      ["ai platform", "copado ai"]
+    );
+
+    const targetFieldMap: Record<string, string | null> = {
+      cicdAdminSeats,
+      cicdUserSeats,
+      successPlan,
+      cicdEdition,
+      dataDeployer,
+      complianceHub,
+      vsm,
+      cvc,
+      crtUserSeats,
+      crtEdition,
+      aiUserSeats,
+      aiEdition,
+      aiPlatform,
+    };
+
+    const queryFieldNames = Array.from(
+      new Set(Object.values(targetFieldMap).filter(Boolean) as string[])
+    );
+
+    if (queryFieldNames.length === 0) {
+      logs.push("[SF Footprint] No matching Product Footprint fields discovered on Account.");
+      return null;
+    }
+
+    // 2. Query target Account directly
+    let whereClause = `Name LIKE '%${accountName.replace(/'/g, "\\'")}%'`;
+    if (accountIds.length > 0) {
+      whereClause = `Id = '${accountIds[0]}'`;
+    }
+
+    const soql = `SELECT Id, Name, ${queryFieldNames.join(", ")} FROM Account WHERE ${whereClause} LIMIT 1`;
+    logs.push(`[SF Footprint] SOQL: ${soql}`);
+
+    const qRes = await fetch(
+      `${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(soql)}`,
+      { headers }
+    );
+
+    if (!qRes.ok) {
+      logs.push(`[SF Footprint] Query failed (${qRes.status}): ${await qRes.text()}`);
+      return null;
+    }
+
+    const qData = await qRes.json();
+    const acc = qData.records?.[0];
+    if (!acc) return null;
+
+        const parseActive = (val: any) => {
+      if (val === null || val === undefined || val === false || val === 0 || val === "" || val === "false") {
+        return "Inactive";
+      }
+      if (val === true || val === "true") {
+        return "Active";
+      }
+      if (typeof val === "string") {
+        const clean = val.trim().toLowerCase();
+        if (clean.includes("inactive") || clean.includes("disabled") || clean.includes("none") || clean.includes("not") || clean === "false") {
+          return "Inactive";
+        }
+        if (clean.includes("active") || clean.includes("enabled") || clean.includes("licensed") || clean === "true") {
+          return "Active";
+        }
+      }
+      return "Inactive";
+    };
+
+    const rawAiSeats = aiUserSeats && acc[aiUserSeats] != null ? Number(acc[aiUserSeats]) : 0;
+    const rawAiEdition = aiEdition && acc[aiEdition] ? String(acc[aiEdition]).trim() : "—";
+
+    return {
+      cicd: {
+        adminSeats: cicdAdminSeats && acc[cicdAdminSeats] != null ? acc[cicdAdminSeats] : 0,
+        userSeats: cicdUserSeats && acc[cicdUserSeats] != null ? acc[cicdUserSeats] : 0,
+        successPlan: successPlan && acc[successPlan] ? acc[successPlan] : "Copado Success",
+        edition: cicdEdition && acc[cicdEdition] ? acc[cicdEdition] : "Copado 1",
+      },
+      addons: {
+        dataDeployer: dataDeployer && acc[dataDeployer] !== undefined && acc[dataDeployer] !== null ? parseActive(acc[dataDeployer]) : "Inactive",
+        complianceHub: complianceHub && acc[complianceHub] !== undefined && acc[complianceHub] !== null ? parseActive(acc[complianceHub]) : "Inactive",
+        vsm: vsm && acc[vsm] !== undefined && acc[vsm] !== null ? parseActive(acc[vsm]) : "Inactive",
+        cvc: cvc && acc[cvc] !== undefined && acc[cvc] !== null ? parseActive(acc[cvc]) : "Inactive",
+      },
+      crt: {
+        userSeats: crtUserSeats && acc[crtUserSeats] != null ? acc[crtUserSeats] : 0,
+        edition: crtEdition && acc[crtEdition] ? acc[crtEdition] : "Copado 1 Bundle",
+      },
+      aiPlatform: {
+        userSeats: Number.isNaN(rawAiSeats) ? 0 : rawAiSeats,
+        edition: rawAiEdition || "—",
+        status: rawAiSeats > 0 || (rawAiEdition && rawAiEdition !== "—") ? "Active" : "Not Licensed",
+      },
+    };
+
+  } catch (err: any) {
+    logs.push(`[SF Footprint] Non-blocking Error: ${err?.message || String(err)}`);
+    return null;
+  }
+}
+
+
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -802,6 +1086,7 @@ Deno.serve(async (req) => {
     const cases = await fetchSalesforceCases(supabase, normalizedAccountName, sfAuth, accountIds, debugLogs);
     const contacts = await fetchSalesforceContacts(sfAuth, accountIds, normalizedAccountName, debugLogs);
     const ebstaData = await fetchEbstaData(normalizedAccountName, sfAuth, effectiveDaysBack, accountIds, debugLogs);
+    const productFootprint = await fetchSalesforceProductFootprint(sfAuth, accountIds, normalizedAccountName, debugLogs);
 
     const sfGongCallEntries = await fetchGongCallIdsFromSalesforce(normalizedAccountName, accountIds, sfAuth, effectiveDaysBack, debugLogs);
 
@@ -839,6 +1124,7 @@ Deno.serve(async (req) => {
         transcripts: gongTranscripts,
         gongData: gongTranscripts,
         ebstaData,
+        productFootprint,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
     );

@@ -24,7 +24,14 @@ import {
   Mail,
   ExternalLink,
   Users,
+  Box,
+  Cpu,
+  ShieldCheck,
+  GitBranch,
+  Workflow,
+  Database,
 } from "lucide-react";
+
 import fileSaver from "file-saver";
 const { saveAs } = (fileSaver as any) || { saveAs: undefined };
 import { supabase } from "@/lib/supabase";
@@ -140,6 +147,7 @@ export const GongItTab = () => {
   const [isChiikawaTheme, setIsChiikawaTheme] = useState(false);
   const [animatedPlaceholder, setAnimatedPlaceholder] = useState("Jeppesen");
   const [daysBack, setDaysBack] = useState<number>(180);
+  const [showFootprintCard, setShowFootprintCard] = useState<boolean>(true);
   const [showEbstaCard, setShowEbstaCard] = useState<boolean>(true);
   const [showContactsCard, setShowContactsCard] = useState<boolean>(true);
   const [showCasesCard, setShowCasesCard] = useState<boolean>(true);
@@ -262,7 +270,7 @@ export const GongItTab = () => {
     setProgressText(
       isChiikawaTheme
         ? "Searching Supabase & EBSTA metrics... 🎀"
-        : "Querying Supabase database for cases & EBSTA score..."
+        : "Querying Supabase database for cases, footprint & EBSTA score..."
     );
 
     const timer1 = setTimeout(() => {
@@ -348,6 +356,7 @@ export const GongItTab = () => {
         contacts: data.contacts || [],
         transcripts: gongCalls,
         ebstaData: ebsta,
+        productFootprint: data?.productFootprint || null,
       };
 
       setResult(finalPayload);
@@ -494,8 +503,29 @@ export const GongItTab = () => {
     md += `> "I have uploaded an artifact from NotebookLM that gives a comprehensive overview of ${result.accountName} (EBSTA Score ${ebstaScore}/100, running Copado Deployer v${versions.deployer}) and their goals, strengths, and pain points. Build a plan to address their problems that we can present to them."\n\n`;
     md += `---\n\n`;
 
+    if (result.productFootprint) {
+      const fp = result.productFootprint;
+      md += `## 2. PRODUCT FOOTPRINT & LICENSES\n\n`;
+      md += `### CICD Information\n`;
+      md += `- **Edition:** ${fp.cicd?.edition || "Copado 1"}\n`;
+      md += `- **Admin Seats:** ${fp.cicd?.adminSeats ?? "N/A"}\n`;
+      md += `- **User Seats:** ${fp.cicd?.userSeats ?? "N/A"}\n`;
+      md += `- **Success Plan:** ${fp.cicd?.successPlan || "Copado Success"}\n\n`;
+      md += `### Add-on Products\n`;
+      md += `- **Data Deployer:** ${fp.addons?.dataDeployer || "Active"}\n`;
+      md += `- **Compliance Hub:** ${fp.addons?.complianceHub || "Active"}\n`;
+      md += `- **Value Stream Maps (VSM):** ${fp.addons?.vsm || "Active"}\n`;
+      md += `- **Copado Version Control (CVC):** ${fp.addons?.cvc || "Active"}\n\n`;
+      md += `### Copado Robotic Testing (CRT)\n`;
+      md += `- **CRT User Seats:** ${fp.crt?.userSeats ?? "N/A"}\n`;
+      md += `- **CRT Edition:** ${fp.crt?.edition || "Copado 1 Bundle"}\n\n`;
+      md += `### AI Platform\n`;
+      md += `- **Status:** ${fp.aiPlatform?.status || "Active"}\n\n`;
+      md += `------------------------------------------------------------\n\n`;
+    }
+
     if (result.ebstaData) {
-      md += `## 2. EBSTA RELATIONSHIP INTELLIGENCE\n`;
+      md += `## 3. EBSTA RELATIONSHIP INTELLIGENCE\n`;
       md += `- **Overall Account Engagement Score:** ${ebstaScore}/100\n\n`;
 
       if (result.ebstaData.contacts && result.ebstaData.contacts.length > 0) {
@@ -528,7 +558,7 @@ export const GongItTab = () => {
       md += `------------------------------------------------------------\n\n`;
     }
 
-    md += `## 3. KEY CONTACTS DIRECTORY (${result.contacts?.length || 0} Contacts)\n\n`;
+    md += `## 4. KEY CONTACTS DIRECTORY (${result.contacts?.length || 0} Contacts)\n\n`;
     if (!result.contacts || result.contacts.length === 0) {
       md += `*No key contacts recorded for this account.*\n\n`;
     } else {
@@ -545,7 +575,7 @@ export const GongItTab = () => {
       md += `\n------------------------------------------------------------\n\n`;
     }
 
-    md += `## 4. SUPPORT CASES REPORT (${result.cases.length} Unique Cases)\n\n`;
+    md += `## 5. SUPPORT CASES REPORT (${result.cases.length} Unique Cases)\n\n`;
     if (result.cases.length === 0) {
       md += `*No active support cases recorded for this account.*\n\n`;
     } else {
@@ -565,7 +595,7 @@ export const GongItTab = () => {
 
     md += `---\n\n`;
 
-    md += `## 5. GONG CALL TRANSCRIPTS (${result.transcripts?.length || 0} Calls Matched)\n\n`;
+    md += `## 6. GONG CALL TRANSCRIPTS (${result.transcripts?.length || 0} Calls Matched)\n\n`;
     if (!result.transcripts || result.transcripts.length === 0) {
       md += `*No recent Gong call transcripts matched this account.*\n\n`;
     } else {
@@ -608,7 +638,8 @@ export const GongItTab = () => {
   ];
 
   const extractedEbstaScore =
-    result?.ebstaData?.ebstaRecord?.Ebsta_Score__c ?? result?.ebstaData?.score;
+  result?.ebstaData?.score ?? result?.ebstaData?.ebstaRecord?.Ebsta_Score__c;
+
 
   const displayCases = sortCasesNewestFirst(result?.cases || cases || []);
   const displayTranscripts = sortGongTranscriptsNewestFirst(result?.transcripts || transcripts || []);
@@ -625,7 +656,7 @@ export const GongItTab = () => {
           <span>What account are we analyzing today?</span>
         </h1>
         <p className="text-muted-foreground text-sm max-w-xl mx-auto leading-relaxed">
-          Pulls live support cases, Key Contacts, EBSTA relationship scores & email transcripts, and Gong call transcripts into a single NotebookLM Briefcase.
+          Pulls live support cases, Product Footprint licenses, Key Contacts, EBSTA relationship scores & email transcripts, and Gong call transcripts into a single NotebookLM Briefcase.
         </p>
 
         {isChiikawaTheme && (
@@ -773,6 +804,11 @@ export const GongItTab = () => {
                     <Activity className="w-3.5 h-3.5 text-current" /> EBSTA Score: {extractedEbstaScore}/100
                   </span>
                 )}
+                {result.productFootprint && (
+                  <span className="flex items-center gap-1.5 bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20 px-2.5 py-1 rounded-md font-mono font-bold">
+                    <Layers className="w-3.5 h-3.5 text-sky-500" /> CICD: {result.productFootprint.cicd?.edition || "Copado 1"}
+                  </span>
+                )}
                 <span className="flex items-center gap-1.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-md font-mono">
                   <Users className="w-3.5 h-3.5 text-indigo-500" /> {result.contacts?.length || 0} Contacts
                 </span>
@@ -823,6 +859,205 @@ export const GongItTab = () => {
               ))}
             </div>
           </div>
+
+                              {/* Product Footprint Card */}
+          {result?.productFootprint && (
+            <div className="bg-card border border-border p-5 rounded-2xl space-y-5 shadow-sm animate-in fade-in duration-200">
+              <div className="flex items-center justify-between pb-3 border-b border-border gap-3">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-sky-500" />
+                  <h3 className="text-foreground font-bold text-base">Product Footprint</h3>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowFootprintCard((curr) => !curr)}
+                    className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:border-primary/60 transition-colors"
+                  >
+                    {showFootprintCard ? "Hide Footprint" : "Show Footprint"}
+                  </button>
+
+                  <span className="bg-sky-500/10 text-sky-600 dark:text-sky-400 text-xs px-2.5 py-1 rounded-md font-mono font-bold border border-sky-500/20">
+                    {result.productFootprint.cicd?.edition || "Copado 1"}
+                  </span>
+                </div>
+              </div>
+
+              {showFootprintCard && (
+                <div className="space-y-6">
+                  {/* CICD Information Section */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      <Box className="w-3.5 h-3.5 text-sky-500" />
+                      <span>CICD Information</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
+                        <span className="text-[11px] text-muted-foreground">Admin Seats</span>
+                        <span className="text-xl font-bold font-mono text-foreground mt-1">
+                          {result.productFootprint.cicd?.adminSeats ?? "N/A"}
+                        </span>
+                      </div>
+
+                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
+                        <span className="text-[11px] text-muted-foreground">User Seats</span>
+                        <span className="text-xl font-bold font-mono text-foreground mt-1">
+                          {result.productFootprint.cicd?.userSeats ?? "N/A"}
+                        </span>
+                      </div>
+
+                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
+                        <span className="text-[11px] text-muted-foreground">Success Plan</span>
+                        <div className="mt-1">
+                          <span className="text-xs font-semibold bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-md inline-block">
+                            ★ {result.productFootprint.cicd?.successPlan || "Copado Success"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
+                        <span className="text-[11px] text-muted-foreground">CICD Edition</span>
+                        <div className="mt-1">
+                          <span className="text-xs font-semibold bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-md inline-block">
+                            {result.productFootprint.cicd?.edition || "Copado 1"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Add-on Products Section (Clean 2-Column Salesforce Layout) */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      <Layers className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>Add-on Products</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {[
+                        {
+                          name: "Data Deployer",
+                          desc: "Relational data migration & seed sets",
+                          icon: Database,
+                          status: result.productFootprint.addons?.dataDeployer,
+                        },
+                        {
+                          name: "Compliance Hub",
+                          desc: "Automated real-time compliance & rule checks",
+                          icon: ShieldCheck,
+                          status: result.productFootprint.addons?.complianceHub,
+                        },
+                        {
+                          name: "Value Stream Maps (VSM)",
+                          desc: "End-to-end pipeline visibility & cycle metrics",
+                          icon: Workflow,
+                          status: result.productFootprint.addons?.vsm,
+                        },
+                        {
+                          name: "Copado Version Control (CVC)",
+                          desc: "Native cloud git repository management",
+                          icon: GitBranch,
+                          status: result.productFootprint.addons?.cvc,
+                        },
+                      ].map((addon, idx) => {
+                        const IconComponent = addon.icon;
+                        const isActive = addon.status === "Active";
+                        return (
+                          <div
+                            key={idx}
+                            className="bg-muted/20 border border-border/70 hover:border-primary/40 hover:bg-muted/30 p-3.5 rounded-xl flex items-center justify-between transition-colors shadow-sm"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div
+                                className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${
+                                  isActive
+                                    ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-500"
+                                    : "bg-muted border-border text-muted-foreground"
+                                }`}
+                              >
+                                <IconComponent className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <p className="text-xs font-bold text-foreground">{addon.name}</p>
+                                <p className="text-[10px] text-muted-foreground line-clamp-1">{addon.desc}</p>
+                              </div>
+                            </div>
+
+                            <span
+                              className={`inline-flex items-center gap-1 text-[11px] font-semibold border px-2.5 py-1 rounded-full shrink-0 ${
+                                isActive
+                                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                                  : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                              }`}
+                            >
+                              {isActive ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <XCircle className="w-3.5 h-3.5 text-rose-500" />}
+                              {addon.status || "Inactive"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Copado Robotic Testing (CRT) Section */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      <Cpu className="w-3.5 h-3.5 text-purple-500" />
+                      <span>Copado Robotic Testing (CRT)</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
+                        <span className="text-[11px] text-muted-foreground">User Seats</span>
+                        <span className="text-xl font-bold font-mono text-foreground mt-1">
+                          {result.productFootprint.crt?.userSeats ?? 0}
+                        </span>
+                      </div>
+
+                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
+                        <span className="text-[11px] text-muted-foreground">CRT Edition</span>
+                        <div className="mt-1">
+                          <span className="text-xs font-semibold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-md inline-block">
+                            {result.productFootprint.crt?.edition || "Copado 1 Bundle"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* AI Platform Section (Matches Salesforce 1:1) */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      <span>AI Platform</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
+                        <span className="text-[11px] text-muted-foreground">AI User Seats</span>
+                        <span className="text-xl font-bold font-mono text-foreground mt-1">
+                          {result.productFootprint.aiPlatform?.userSeats ?? 0}
+                        </span>
+                      </div>
+
+                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
+                        <span className="text-[11px] text-muted-foreground">AI Edition</span>
+                        <div className="mt-1">
+                          <span className="text-xs font-semibold bg-muted text-muted-foreground border border-border px-2 py-0.5 rounded-md inline-block">
+                            {result.productFootprint.aiPlatform?.edition || "—"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+
 
           {/* Key Contacts Card */}
           <div className="bg-card border border-border p-5 rounded-2xl space-y-4 shadow-sm animate-in fade-in duration-200">
