@@ -86,57 +86,62 @@ async function resolveTargetAccounts(sfAuth: any, accountName: string, logs: str
 
   const headers = { Authorization: `Bearer ${sfAuth.accessToken}` };
   const safeName = accountName.replace(/'/g, "\\'");
+  const cleanName = accountName.replace(/^(the|a|an)\s+/i, "").replace(/[.,]/g, "").trim();
+  const safeClean = cleanName.replace(/'/g, "\\'");
 
-  const qExact = `SELECT Id, Name, Type, AnnualRevenue, LastModifiedDate FROM Account WHERE Name = '${safeName}' LIMIT 10`;
-  logs.push(`[Account Resolver] Querying exact match: ${qExact}`);
+  const executeAccountQuery = async (whereClause: string) => {
+    // 1. Try querying with revenue/type ranking
+    const qRich = `SELECT Id, Name, Type, AnnualRevenue, LastModifiedDate FROM Account WHERE ${whereClause} LIMIT 15`;
+    try {
+      const res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(qRich)}`, { headers });
+      if (res.ok) {
+        const d = await res.json();
+        return d.records || [];
+      }
+    } catch {
+      // ignore and fallback
+    }
 
-  let res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(qExact)}`, { headers });
-  let data = res.ok ? await res.json() : null;
-  let records = data?.records || [];
+    // 2. Safe fallback: Id, Name, LastModifiedDate are standard fields guaranteed to exist
+    const qBasic = `SELECT Id, Name, LastModifiedDate FROM Account WHERE ${whereClause} LIMIT 15`;
+    try {
+      const res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(qBasic)}`, { headers });
+      if (res.ok) {
+        const d = await res.json();
+        return d.records || [];
+      }
+      const errText = await res.text();
+      logs.push(`[Account Resolver] Query failed (${res.status}): ${errText}`);
+    } catch (e) {
+      logs.push(`[Account Resolver] Query error: ${String(e)}`);
+    }
+    return [];
+  };
 
-  let exactMatches = records.filter(
-    (r: any) => r.Name.toLowerCase().trim() === accountName.toLowerCase().trim()
-  );
+  // Step A: Exact match
+  logs.push(`[Account Resolver] Trying exact match for: ${safeName}`);
+  let records = await executeAccountQuery(`Name = '${safeName}'`);
 
-  if (exactMatches.length === 0) {
-    const qPrefix = `SELECT Id, Name, Type, AnnualRevenue, LastModifiedDate FROM Account WHERE Name LIKE '${safeName}%' LIMIT 15`;
-    logs.push(`[Account Resolver] Trying prefix match: ${qPrefix}`);
-
-    res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(qPrefix)}`, { headers });
-    data = res.ok ? await res.json() : null;
-    records = data?.records || [];
-
-    exactMatches = records.filter(
-      (r: any) => r.Name.toLowerCase().trim() === accountName.toLowerCase().trim()
-    );
-  }
-
+  // Step B: Prefix match
   if (records.length === 0) {
-    const cleanName = accountName.replace(/^(the|a|an)\s+/i, "").replace(/[.,]/g, "").trim();
-    const safeClean = cleanName.replace(/'/g, "\\'");
-    const qClean = `SELECT Id, Name, Type, AnnualRevenue, LastModifiedDate FROM Account WHERE Name = '${safeClean}' OR Name LIKE '${safeClean}%' LIMIT 15`;
-    logs.push(`[Account Resolver] Trying cleaned query: ${qClean}`);
-
-    res = await fetch(`${sfAuth.instanceUrl}/services/data/v58.0/query/?q=${encodeURIComponent(qClean)}`, { headers });
-    data = res.ok ? await res.json() : null;
-    records = data?.records || [];
-
-    exactMatches = records.filter(
-      (r: any) => r.Name.toLowerCase().trim() === cleanName.toLowerCase().trim()
-    );
+    logs.push(`[Account Resolver] Trying prefix match for: ${safeName}%`);
+    records = await executeAccountQuery(`Name LIKE '${safeName}%'`);
   }
 
-  let targetRecords: any[] = exactMatches.length > 0 ? exactMatches : records;
+  // Step C: Cleaned name & contains wildcard (%...%)
+  if (records.length === 0) {
+    logs.push(`[Account Resolver] Trying wildcard match for: %${safeClean}%`);
+    records = await executeAccountQuery(`Name LIKE '%${safeClean}%'`);
+  }
 
-  // Rank active customer accounts first, then highest revenue, then recently modified
-  if (targetRecords.length > 1) {
-    targetRecords.sort((a: any, b: any) => {
+  if (records.length > 1) {
+    records.sort((a: any, b: any) => {
       const aIsCust = (a.Type || "").toLowerCase() === "customer" ? 1 : 0;
       const bIsCust = (b.Type || "").toLowerCase() === "customer" ? 1 : 0;
       if (bIsCust !== aIsCust) return bIsCust - aIsCust;
 
-      const aExact = a.Name.toLowerCase().trim() === accountName.toLowerCase().trim() ? 1 : 0;
-      const bExact = b.Name.toLowerCase().trim() === accountName.toLowerCase().trim() ? 1 : 0;
+      const aExact = a.Name?.toLowerCase().trim() === accountName.toLowerCase().trim() ? 1 : 0;
+      const bExact = b.Name?.toLowerCase().trim() === accountName.toLowerCase().trim() ? 1 : 0;
       if (bExact !== aExact) return bExact - aExact;
 
       const aRev = Number(a.AnnualRevenue) || 0;
@@ -147,12 +152,18 @@ async function resolveTargetAccounts(sfAuth: any, accountName: string, logs: str
     });
   }
 
-  const accountIds = targetRecords.map((r: any) => String(r.Id));
-  const matchedNames = targetRecords.map((r: any) => String(r.Name));
-  logs.push(`[Account Resolver] Resolved target account: ${matchedNames[0]} (${accountIds[0]})`);
+  const accountIds = records.map((r: any) => String(r.Id));
+  const matchedNames = records.map((r: any) => String(r.Name));
+
+  if (accountIds.length > 0) {
+    logs.push(`[Account Resolver] Resolved target account: ${matchedNames[0]} (${accountIds[0]}) - Total IDs: ${accountIds.length}`);
+  } else {
+    logs.push(`[Account Resolver] No Account record found in Salesforce matching "${accountName}"`);
+  }
 
   return { accountIds, matchedNames };
 }
+
 
 
 async function fetchSalesforceCases(supabase: any, accountName: string, sfAuth?: any, accountIds: string[] = [], logs: string[] = []) {
@@ -371,10 +382,6 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
   let rawEmails: any[] = [];
 
     try {
-    const primaryAccountId = accountIds[0] || null;
-
-    // 1. Check if the Account itself has the live Ebsta score
-    let directAccountScore: number | null = null;
     if (primaryAccountId) {
       try {
         const accCheckRes = await fetch(
@@ -520,6 +527,14 @@ async function fetchEbstaData(accountName: string, sfAuth: any, effectiveDaysBac
     logs.push(`[EBSTA] Error: ${String(error)}`);
     return null;
   }
+}
+
+const GONG_URL_ID_RE = /gong\.io\/call\?id=(\d{6,})/gi;
+
+function extractGongIds(text: string, into: Set<string>) {
+  if (!text) return;
+  for (const m of text.matchAll(GONG_URL_ID_RE)) into.add(m[1]);
+  if (/^\d{15,20}$/.test(text.trim())) into.add(text.trim());
 }
 
 async function fetchGongCallIdsFromSalesforce(
