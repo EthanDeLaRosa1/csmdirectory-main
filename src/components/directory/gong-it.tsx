@@ -1,26 +1,22 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
   Search,
+  Building2,
+  Calendar,
+  X,
   Download,
   FileText,
   Phone,
-  Sparkles,
   CheckCircle2,
   Loader2,
-  ArrowRight,
   Copy,
   Check,
-  Globe,
   Clock,
   Layers,
-  Zap,
   XCircle,
   AlertCircle,
-  Heart,
   RefreshCw,
   Activity,
-  Eye,
-  EyeOff,
   Mail,
   ExternalLink,
   Users,
@@ -30,14 +26,23 @@ import {
   GitBranch,
   Workflow,
   Database,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
+
 
 import fileSaver from "file-saver";
 const { saveAs } = (fileSaver as any) || { saveAs: undefined };
 import { supabase } from "@/lib/supabase";
 import { collectBriefcase, normalizeAccountName, extractDomainFromQuery } from "@/lib/paz/api";
 
-const SAMPLE_ACCOUNTS = ["Brenntag North America", "Amtrak", "Travelers", "Wizards of the Coast, Inc", "The Nebraska Medical Center"];
+const SAMPLE_ACCOUNTS = [
+  "Brenntag North America",
+  "Amtrak",
+  "Travelers",
+  "Wizards of the Coast, Inc",
+  "The Nebraska Medical Center",
+];
 
 const getChronoTimestamp = (value: unknown): number => {
   if (!value) return 0;
@@ -86,51 +91,11 @@ const safeCacheSet = (key: string, value: string) => {
       localStorage.setItem(key, value);
       return true;
     } catch (retryError: any) {
-      console.warn("Briefcase cache quota exceeded after clearing old entries; skipping local cache write.", retryError);
+      console.warn("Briefcase cache quota exceeded after clearing old entries; skipping write.", retryError);
       return false;
     }
   }
 };
-
-const ChiikawaAvatar = () => (
-  <svg className="w-9 h-9 drop-shadow-sm" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="8" cy="8" r="4.5" fill="#FFFFFF" stroke="#333333" strokeWidth="1.5" />
-    <circle cx="24" cy="8" r="4.5" fill="#FFFFFF" stroke="#333333" strokeWidth="1.5" />
-    <circle cx="16" cy="18" r="12.5" fill="#FFFFFF" stroke="#333333" strokeWidth="1.5" />
-    <circle cx="11.5" cy="16" r="1.8" fill="#333333" />
-    <circle cx="20.5" cy="16" r="1.8" fill="#333333" />
-    <ellipse cx="8.5" cy="19" rx="2.5" ry="1.5" fill="#F472B6" />
-    <ellipse cx="23.5" cy="19" rx="2.5" ry="1.5" fill="#F472B6" />
-    <path d="M14 20.5 C15 22, 17 22, 18 20.5" stroke="#333333" strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
-);
-
-const HachiwareAvatar = () => (
-  <svg className="w-9 h-9 drop-shadow-sm" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M8 10 L4 4 L12 7 Z" fill="#60A5FA" stroke="#333333" strokeWidth="1.5" />
-    <path d="M24 10 L28 4 L12 7 Z" fill="#60A5FA" stroke="#333333" strokeWidth="1.5" />
-    <circle cx="16" cy="18" r="12.5" fill="#FFFFFF" stroke="#333333" strokeWidth="1.5" />
-    <path d="M7.5 12 C10 8, 22 8, 24.5 12 C20 15, 12 15, 7.5 12 Z" fill="#60A5FA" />
-    <circle cx="11.5" cy="17" r="1.8" fill="#333333" />
-    <circle cx="20.5" cy="17" r="1.8" fill="#333333" />
-    <ellipse cx="8.5" cy="20" rx="2" ry="1.2" fill="#F472B6" />
-    <ellipse cx="23.5" cy="20" rx="2" ry="1.2" fill="#F472B6" />
-    <path d="M14.5 20.5 C15.5 22, 16.5 22, 17.5 20.5" stroke="#333333" strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
-);
-
-const UsagiAvatar = () => (
-  <svg className="w-9 h-9 drop-shadow-sm" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="9" y="1" width="4" height="12" rx="2" fill="#FEF08A" stroke="#333333" strokeWidth="1.5" />
-    <rect x="19" y="1" width="4" height="12" rx="2" fill="#FEF08A" stroke="#333333" strokeWidth="1.5" />
-    <circle cx="16" cy="19" r="11.5" fill="#FEF08A" stroke="#333333" strokeWidth="1.5" />
-    <circle cx="11.5" cy="17" r="1.8" fill="#333333" />
-    <circle cx="20.5" cy="17" r="1.8" fill="#333333" />
-    <ellipse cx="8.5" cy="20" rx="2" ry="1.2" fill="#F472B6" />
-    <ellipse cx="23.5" cy="20" rx="2" ry="1.2" fill="#F472B6" />
-    <ellipse cx="16" cy="21" rx="2.5" ry="2" fill="#EF4444" stroke="#333333" strokeWidth="1" />
-  </svg>
-);
 
 export const GongItTab = () => {
   const [accountName, setAccountName] = useState("");
@@ -144,93 +109,29 @@ export const GongItTab = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [hasError, setHasError] = useState<boolean>(false);
   const [copiedPromptIndex, setCopiedPromptIndex] = useState<number | null>(null);
-  const [isChiikawaTheme, setIsChiikawaTheme] = useState(false);
-  const [animatedPlaceholder, setAnimatedPlaceholder] = useState("Jeppesen");
   const [daysBack, setDaysBack] = useState<number>(180);
+
   const [showFootprintCard, setShowFootprintCard] = useState<boolean>(true);
   const [showEbstaCard, setShowEbstaCard] = useState<boolean>(true);
   const [showContactsCard, setShowContactsCard] = useState<boolean>(true);
   const [showCasesCard, setShowCasesCard] = useState<boolean>(true);
   const [showGongCard, setShowGongCard] = useState<boolean>(true);
+  const [showPrompts, setShowPrompts] = useState<boolean>(true);
 
   const searchIdRef = useRef<number>(0);
   const activeTimersRef = useRef<NodeJS.Timeout[]>([]);
 
   useEffect(() => {
-    const queries = ["The Nebraska Medical Center", "Jeppesen", "Brenntag", "Travelers", "Copado"];
-    let queryIndex = 0;
-    let charIndex = "The Nebraska Medical Center".length;
-    let deleting = false;
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-    const tick = () => {
-      const current = queries[queryIndex];
-      if (!current) return;
-
-      if (!deleting && charIndex <= current.length) {
-        const nextText = current.slice(0, charIndex);
-        setAnimatedPlaceholder(nextText);
-        charIndex += 1;
-
-        if (charIndex > current.length) {
-          deleting = true;
-          timeoutId = setTimeout(tick, 1500);
-          return;
-        }
-      }
-
-      if (deleting) {
-        const nextText = current.slice(0, Math.max(0, charIndex - 1));
-        setAnimatedPlaceholder(nextText);
-        charIndex -= 1;
-
-        if (charIndex <= 0) {
-          deleting = false;
-          queryIndex = (queryIndex + 1) % queries.length;
-          charIndex = 0;
-          timeoutId = setTimeout(tick, 100);
-          return;
-        }
-      }
-
-      const nextDelay = deleting ? 50 : 100;
-      timeoutId = setTimeout(tick, nextDelay);
-    };
-
-    timeoutId = setTimeout(tick, 100);
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, []);
-
-  useEffect(() => {
     try {
       for (let i = localStorage.length - 1; i >= 0; i--) {
         const key = localStorage.key(i);
-        if (
-          key && (
-            key.startsWith("csm_briefcase_cache_") ||
-            key === "csm_gong_search_error"
-          )
-        ) {
+        if (key && (key.startsWith("csm_briefcase_cache_") || key === "csm_gong_search_error")) {
           localStorage.removeItem(key);
         }
       }
     } catch {
-      // ignore storage access issues
+      // ignore
     }
-
-    const checkTheme = () => {
-      const active = localStorage.getItem("csm_accent_theme");
-      setIsChiikawaTheme(active === "chiikawa");
-    };
-    checkTheme();
-    window.addEventListener("storage", checkTheme);
-    const interval = setInterval(checkTheme, 1000);
-    return () => {
-      window.removeEventListener("storage", checkTheme);
-      clearInterval(interval);
-    };
   }, []);
 
   const handleCancelSearch = () => {
@@ -241,7 +142,7 @@ export const GongItTab = () => {
     setLoading(false);
     setProgressStage(0);
     setProgressText("");
-    setErrorMsg("Search cancelled.");
+    setErrorMsg("Query cancelled.");
   };
 
   const executeSearch = async (targetAccount: string, forceFresh = false) => {
@@ -252,7 +153,7 @@ export const GongItTab = () => {
     try {
       localStorage.removeItem(cacheKey);
     } catch {
-      // ignore localStorage access errors
+      // ignore
     }
 
     setIsCachedResult(false);
@@ -267,31 +168,19 @@ export const GongItTab = () => {
     setLoading(true);
     setResult(null);
     setProgressStage(1);
-    setProgressText(
-      isChiikawaTheme
-        ? "Searching Supabase & EBSTA metrics... 🎀"
-        : "Querying Supabase database for cases, footprint & EBSTA score..."
-    );
+    setProgressText("Resolving Salesforce Account & EBSTA metrics...");
 
     const timer1 = setTimeout(() => {
       if (searchIdRef.current === thisSearchId) {
         setProgressStage(2);
-        setProgressText(
-          isChiikawaTheme
-            ? "Matching Gong transcripts... 🐱"
-            : "Extracting email domains & querying Gong API..."
-        );
+        setProgressText("Querying Gong call transcripts by Account ID...");
       }
     }, 1200);
 
     const timer2 = setTimeout(() => {
       if (searchIdRef.current === thisSearchId) {
         setProgressStage(3);
-        setProgressText(
-          isChiikawaTheme
-            ? "Packaging Walt's Briefcase! YAHA! 🐰"
-            : "Synthesizing transcripts & building Briefcase..."
-        );
+        setProgressText("Aggregating Product Footprint & Briefcase payload...");
       }
     }, 2400);
 
@@ -416,44 +305,38 @@ export const GongItTab = () => {
 
   const downloadEbstaArtifact = () => {
     if (!result?.ebstaData) return;
-
     const payload = {
       accountName: result.accountName || accountName,
       ebsta: result.ebstaData,
       exportedAt: new Date().toISOString(),
     };
-
     const safeName = (result.accountName || accountName || "account")
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "account";
-
     downloadJsonArtifact(`${safeName}-ebsta.json`, payload);
   };
 
   const downloadCasesArtifact = () => {
     if (!result?.cases) return;
-
     const payload = {
       accountName: result.accountName || accountName,
       cases: result.cases,
       exportedAt: new Date().toISOString(),
     };
-
     const safeName = (result.accountName || accountName || "account")
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "account";
-
     downloadJsonArtifact(`${safeName}-support-cases.json`, payload);
   };
 
-  const buildGongMarkdownLocally = (name: string, transcripts: any[]) => {
-    let md = `# Gong Call Transcripts: ${name}\n\n*${transcripts.length} call(s) matched · exported ${new Date().toLocaleDateString()}*\n\n`;
-    sortGongTranscriptsNewestFirst(transcripts).forEach((t: any) => {
+  const buildGongMarkdownLocally = (name: string, callTranscripts: any[]) => {
+    let md = `# Gong Call Transcripts: ${name}\n\n*${callTranscripts.length} call(s) matched · exported ${new Date().toLocaleDateString()}*\n\n`;
+    sortGongTranscriptsNewestFirst(callTranscripts).forEach((t: any) => {
       md += `## ${t.title || "Untitled Gong Call"}\n\n`;
       md += `- **Date:** ${t.started ? new Date(t.started).toLocaleString() : "N/A"}\n- **Call ID:** ${t.callId}\n`;
-      if (t.url) md += `- **Gong link:** ${t.url}\n`;
+      if (t.url) md += `- **Gong Link:** ${t.url}\n`;
       if (t.parties?.length) {
         md += `- **Attendees:** ${t.parties.map((p: any) => p.name || p.emailAddress || p.email).filter(Boolean).join(", ")}\n`;
       }
@@ -469,108 +352,71 @@ export const GongItTab = () => {
 
   const downloadGongArtifact = () => {
     if (!result?.transcripts) return;
-
     const name = result.accountName || accountName || "account";
     const md: string = result.gongMarkdown || buildGongMarkdownLocally(name, result.transcripts);
-
     const safeName = name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "account";
-
     const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
     saveAs(blob, `${safeName}-gong-transcripts.md`);
   };
 
   const downloadSingleMarkdownArtifact = () => {
     if (!result) return;
-
-    const ebstaScore =
-      result.ebstaData?.ebstaRecord?.Ebsta_Score__c ?? result.ebstaData?.score ?? "N/A";
+    const ebstaScore = result.ebstaData?.ebstaRecord?.Ebsta_Score__c ?? result.ebstaData?.score ?? "N/A";
 
     let md = `# WALT'S VAULT BRIEFCASE: ${result.accountName.toUpperCase()}\n`;
-    md += `*Generated on: ${new Date().toLocaleDateString()} | Curated via Walt's Gong It Workflow*\n`;
-    md += `*EBSTA Engagement Health Score:* ${ebstaScore}/100\n`;
-    md += `*Detected Versions:* Copado Deployer v${versions.deployer} | Copado Connect v${versions.connect}\n\n`;
-    md += `---\n\n`;
+    md += `*Generated on: ${new Date().toLocaleDateString()} | CSM Enterprise Briefcase Engine*\n`;
+    md += `*EBSTA Engagement Score:* ${ebstaScore}/100\n`;
+    md += `*Detected Versions:* Copado Deployer v${versions.deployer} | Copado Connect v${versions.connect}\n\n---\n\n`;
 
     md += `## 1. WALT'S NOTEBOOK LM PROMPTS\n\n`;
-    md += `**Prompt 1 (Initial Source Analysis):**\n`;
-    md += `> "Referencing all uploaded sources on ${result.accountName}, summarize their budgeting, hiring, company initiatives, and DevOps team structure."\n\n`;
-    md += `**Prompt 2 (Strategic Priorities & Gong Sentiment):**\n`;
-    md += `> "Referencing recent transcripts, emails, and support cases, generate what are ${result.accountName}'s strategic initiatives and priorities."\n\n`;
-    md += `**Prompt 3 (Copado AI Plan Input):**\n`;
-    md += `> "I have uploaded an artifact from NotebookLM that gives a comprehensive overview of ${result.accountName} (EBSTA Score ${ebstaScore}/100, running Copado Deployer v${versions.deployer}) and their goals, strengths, and pain points. Build a plan to address their problems that we can present to them."\n\n`;
-    md += `---\n\n`;
+    md += `**Prompt 1 (Initial Source Analysis):**\n> "Referencing all uploaded sources on ${result.accountName}, summarize their budgeting, hiring, company initiatives, and DevOps team structure."\n\n`;
+    md += `**Prompt 2 (Strategic Priorities & Gong Sentiment):**\n> "Referencing recent transcripts, emails, and support cases, generate what are ${result.accountName}'s strategic initiatives and priorities."\n\n`;
+    md += `**Prompt 3 (Copado AI Plan Input):**\n> "I have uploaded an artifact from NotebookLM that gives a comprehensive overview of ${result.accountName} (EBSTA Score ${ebstaScore}/100, running Copado Deployer v${versions.deployer}) and their goals, strengths, and pain points. Build a plan to address their problems that we can present to them."\n\n---\n\n`;
 
     if (result.productFootprint) {
       const fp = result.productFootprint;
       md += `## 2. PRODUCT FOOTPRINT & LICENSES\n\n`;
-      md += `### CICD Information\n`;
-      md += `- **Edition:** ${fp.cicd?.edition || "Copado 1"}\n`;
-      md += `- **Admin Seats:** ${fp.cicd?.adminSeats ?? "N/A"}\n`;
-      md += `- **User Seats:** ${fp.cicd?.userSeats ?? "N/A"}\n`;
-      md += `- **Success Plan:** ${fp.cicd?.successPlan || "Copado Success"}\n\n`;
-      md += `### Add-on Products\n`;
-      md += `- **Data Deployer:** ${fp.addons?.dataDeployer || "Active"}\n`;
-      md += `- **Compliance Hub:** ${fp.addons?.complianceHub || "Active"}\n`;
-      md += `- **Value Stream Maps (VSM):** ${fp.addons?.vsm || "Active"}\n`;
-      md += `- **Copado Version Control (CVC):** ${fp.addons?.cvc || "Active"}\n\n`;
-      md += `### Copado Robotic Testing (CRT)\n`;
-      md += `- **CRT User Seats:** ${fp.crt?.userSeats ?? "N/A"}\n`;
-      md += `- **CRT Edition:** ${fp.crt?.edition || "Copado 1 Bundle"}\n\n`;
-      md += `### AI Platform\n`;
-      md += `- **Status:** ${fp.aiPlatform?.status || "Active"}\n\n`;
-      md += `------------------------------------------------------------\n\n`;
+      md += `### CICD Information\n- **Edition:** ${fp.cicd?.edition || "Copado 1"}\n- **Admin Seats:** ${fp.cicd?.adminSeats ?? "N/A"}\n- **User Seats:** ${fp.cicd?.userSeats ?? "N/A"}\n- **Success Plan:** ${fp.cicd?.successPlan || "Copado Success"}\n\n`;
+      md += `### Add-on Products\n- **Data Deployer:** ${fp.addons?.dataDeployer || "Active"}\n- **Compliance Hub:** ${fp.addons?.complianceHub || "Active"}\n- **Value Stream Maps (VSM):** ${fp.addons?.vsm || "Active"}\n- **Copado Version Control (CVC):** ${fp.addons?.cvc || "Active"}\n\n`;
+      md += `### Copado Robotic Testing (CRT)\n- **CRT User Seats:** ${fp.crt?.userSeats ?? "N/A"}\n- **CRT Edition:** ${fp.crt?.edition || "Copado 1 Bundle"}\n\n`;
+      md += `### AI Platform\n- **Status:** ${fp.aiPlatform?.status || "Active"}\n\n------------------------------------------------------------\n\n`;
     }
 
     if (result.ebstaData) {
-      md += `## 3. EBSTA RELATIONSHIP INTELLIGENCE\n`;
-      md += `- **Overall Account Engagement Score:** ${ebstaScore}/100\n\n`;
-
-      if (result.ebstaData.contacts && result.ebstaData.contacts.length > 0) {
+      md += `## 3. EBSTA RELATIONSHIP INTELLIGENCE\n- **Overall Account Score:** ${ebstaScore}/100\n\n`;
+      if (result.ebstaData.contacts?.length) {
         md += `### Top Engaged Stakeholders\n`;
         result.ebstaData.contacts.forEach((c: any) => {
-          md += `- **${c.name}** (${c.title}): Engagement Score ${c.score}/100\n`;
+          md += `- **${c.name}** (${c.title}): Score ${c.score}/100\n`;
         });
         md += `\n`;
       }
-
-      if (result.ebstaData.opportunities && result.ebstaData.opportunities.length > 0) {
+      if (result.ebstaData.opportunities?.length) {
         md += `### Opportunity Pipeline Health\n`;
         result.ebstaData.opportunities.forEach((o: any) => {
           md += `- **${o.name}** (Stage: ${o.stage}): Deal Score ${o.score}/100\n`;
         });
         md += `\n`;
       }
-
-      if (result.ebstaData.emails && result.ebstaData.emails.length > 0) {
-        md += `### EBSTA Email Repository Transcripts (${result.ebstaData.emails.length} Emails Logged)\n\n`;
+      if (result.ebstaData.emails?.length) {
+        md += `### EBSTA Email Repository (${result.ebstaData.emails.length} Emails)\n\n`;
         result.ebstaData.emails.forEach((e: any) => {
-          md += `#### ${e.subject}\n`;
-          md += `- **Date:** ${e.date ? new Date(e.date).toLocaleString() : "N/A"}\n`;
-          md += `- **From:** ${e.from}\n`;
-          md += `- **To:** ${e.to}\n`;
-          md += `- **Body:**\n${e.body}\n\n`;
-          md += `------------------------------------------------------------\n\n`;
+          md += `#### ${e.subject}\n- **Date:** ${e.date ? new Date(e.date).toLocaleString() : "N/A"}\n- **From:** ${e.from}\n- **To:** ${e.to}\n- **Body:**\n${e.body}\n\n------------------------------------------------------------\n\n`;
         });
       }
-      md += `------------------------------------------------------------\n\n`;
     }
 
     md += `## 4. KEY CONTACTS DIRECTORY (${result.contacts?.length || 0} Contacts)\n\n`;
-    if (!result.contacts || result.contacts.length === 0) {
+    if (!result.contacts?.length) {
       md += `*No key contacts recorded for this account.*\n\n`;
     } else {
-      md += `| Contact Name | Title | Email | Copado Role | Key Contact | CSM Key Contact | Last Activity |\n`;
-      md += `| :--- | :--- | :--- | :--- | :---: | :---: | :---: |\n`;
-
+      md += `| Contact Name | Title | Email | Copado Role | Key Contact | CSM Key Contact | Last Activity |\n| :--- | :--- | :--- | :--- | :---: | :---: | :---: |\n`;
       result.contacts.forEach((c: any) => {
-        const keyContact = c.isKeyContact ? "Yes" : "No";
-        const csmKeyContact = c.isCsmKeyContact ? "Yes" : "No";
         const emailLink = c.email !== "N/A" ? `[${c.email}](mailto:${c.email})` : "N/A";
-
-        md += `| ${c.name} | ${c.title} | ${emailLink} | ${c.copadoRole} | ${keyContact} | ${csmKeyContact} | ${c.lastActivity} |\n`;
+        md += `| ${c.name} | ${c.title} | ${emailLink} | ${c.copadoRole} | ${c.isKeyContact ? "Yes" : "No"} | ${c.isCsmKeyContact ? "Yes" : "No"} | ${c.lastActivity} |\n`;
       });
       md += `\n------------------------------------------------------------\n\n`;
     }
@@ -582,21 +428,12 @@ export const GongItTab = () => {
       result.cases.forEach((c: any) => {
         const desc = c.description && c.description !== "null" ? c.description.trim() : "No description provided.";
         const email = c.contact_email && c.contact_email !== "null" ? c.contact_email : "N/A";
-
-        md += `### Case ${c.case_number}: ${c.subject}\n`;
-        md += `- **Status:** ${c.status || "N/A"}\n`;
-        md += `- **Owner:** ${c.case_owner || "N/A"}\n`;
-        md += `- **Date Opened:** ${c.date_opened || "N/A"}\n`;
-        md += `- **Contact Email:** ${email}\n`;
-        md += `- **Description:**\n${desc}\n\n`;
-        md += `------------------------------------------------------------\n\n`;
+        md += `### Case ${c.case_number}: ${c.subject}\n- **Status:** ${c.status || "N/A"}\n- **Owner:** ${c.case_owner || "N/A"}\n- **Date Opened:** ${c.date_opened || "N/A"}\n- **Contact Email:** ${email}\n- **Description:**\n${desc}\n\n------------------------------------------------------------\n\n`;
       });
     }
 
-    md += `---\n\n`;
-
-    md += `## 6. GONG CALL TRANSCRIPTS (${result.transcripts?.length || 0} Calls Matched)\n\n`;
-    if (!result.transcripts || result.transcripts.length === 0) {
+    md += `---\n\n## 6. GONG CALL TRANSCRIPTS (${result.transcripts?.length || 0} Calls Matched)\n\n`;
+    if (!result.transcripts?.length) {
       md += `*No recent Gong call transcripts matched this account.*\n\n`;
     } else {
       result.transcripts.forEach((t: any) => {
@@ -611,24 +448,22 @@ export const GongItTab = () => {
     }
 
     const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
-    saveAs(blob, `WaltsVault_${result.accountName.replace(/\s+/g, "_")}.md`);
+    saveAs(blob, `Briefcase_${result.accountName.replace(/\s+/g, "_")}.md`);
   };
 
   const getStatusBadgeColor = (status: string) => {
     const lower = (status || "").toLowerCase();
     if (lower.includes("resolved") || lower.includes("closed"))
-      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+      return "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800";
     if (lower.includes("progress") || lower.includes("open"))
-      return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
-    if (lower.includes("spam") || lower.includes("scope"))
-      return "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20";
+      return "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border-amber-300 dark:border-amber-800";
     return "bg-muted text-muted-foreground border-border";
   };
 
   const getEbstaScoreColor = (score: number) => {
-    if (score >= 80) return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
-    if (score >= 50) return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
-    return "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20";
+    if (score >= 80) return "text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800";
+    if (score >= 50) return "text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800";
+    return "text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50 border-rose-200 dark:border-rose-800";
   };
 
   const prompts = [
@@ -638,60 +473,36 @@ export const GongItTab = () => {
   ];
 
   const extractedEbstaScore =
-  result?.ebstaData?.score ?? result?.ebstaData?.ebstaRecord?.Ebsta_Score__c;
-
+    result?.ebstaData?.score ?? result?.ebstaData?.ebstaRecord?.Ebsta_Score__c;
 
   const displayCases = sortCasesNewestFirst(result?.cases || cases || []);
   const displayTranscripts = sortGongTranscriptsNewestFirst(result?.transcripts || transcripts || []);
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-8 relative">
-      <div className="relative text-center space-y-3 pt-4 pb-2">
-        <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold shadow-sm">
-          {isChiikawaTheme ? <Heart className="w-3.5 h-3.5 text-primary fill-primary animate-pulse" /> : <Sparkles className="w-3.5 h-3.5 text-primary animate-pulse" />}
-          <span>{isChiikawaTheme ? "Chiikawa Briefcase Engine 🎀✨" : "Walt's Gong It Intelligence Engine"}</span>
+    <div className="w-full max-w-7xl mx-auto px-4 py-5 space-y-4">
+      {/* 1. Header Toolbar */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-border">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-bold text-foreground tracking-tight">Account Intelligence Console</h1>
+            <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded-sm bg-muted text-muted-foreground border border-border">
+              Enterprise v2
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Real-time synchronization across Salesforce Cases, Product Footprint, EBSTA Intelligence, and Gong.
+          </p>
         </div>
 
-        <h1 className="text-3xl sm:text-4xl font-extrabold text-foreground tracking-tight flex items-center justify-center gap-2">
-          <span>What account are we analyzing today?</span>
-        </h1>
-        <p className="text-muted-foreground text-sm max-w-xl mx-auto leading-relaxed">
-          Pulls live support cases, Product Footprint licenses, Key Contacts, EBSTA relationship scores & email transcripts, and Gong call transcripts into a single NotebookLM Briefcase.
-        </p>
-
-        {isChiikawaTheme && (
-          <div className="pt-2 flex items-center justify-center gap-6">
-            <div className="flex flex-col items-center gap-1 animate-bounce">
-              <ChiikawaAvatar />
-              <span className="text-[11px] font-bold text-pink-600 dark:text-pink-300 bg-pink-100 dark:bg-pink-950/80 px-2 py-0.5 rounded-full border border-pink-300 dark:border-pink-800">
-                Chiikawa "Yaha!"
-              </span>
-            </div>
-            <div className="flex flex-col items-center gap-1 animate-bounce [animation-delay:200ms]">
-              <HachiwareAvatar />
-              <span className="text-[11px] font-bold text-blue-600 dark:text-blue-300 bg-blue-100 dark:bg-blue-950/80 px-2 py-0.5 rounded-full border border-blue-300 dark:border-blue-800">
-                Hachiware "Ura!"
-              </span>
-            </div>
-            <div className="flex flex-col items-center gap-1 animate-bounce [animation-delay:400ms]">
-              <UsagiAvatar />
-              <span className="text-[11px] font-bold text-amber-600 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-800">
-                Usagi "Fuwa!"
-              </span>
-            </div>
-          </div>
-        )}
-
-        <div className="pt-1 flex flex-wrap items-center justify-center gap-2">
-          <span className="text-xs text-muted-foreground flex items-center gap-1 font-medium mr-1">
-            <Zap className="w-3 h-3 text-amber-500" /> Try Sample:
-          </span>
+        {/* Quick account switcher */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-muted-foreground font-medium mr-1">Presets:</span>
           {SAMPLE_ACCOUNTS.map((acc) => (
             <button
               key={acc}
               onClick={() => handleChipClick(acc)}
               disabled={loading}
-              className="text-xs bg-muted/60 hover:bg-primary/10 hover:border-primary/40 text-muted-foreground hover:text-foreground border border-border rounded-full px-3 py-1 transition-all disabled:opacity-50"
+              className="text-[11px] bg-muted/80 hover:bg-accent text-foreground border border-border rounded-sm px-2 py-1 transition-colors disabled:opacity-50 font-medium"
             >
               {acc}
             </button>
@@ -699,41 +510,71 @@ export const GongItTab = () => {
         </div>
       </div>
 
-      <div className="bg-card border border-border p-2 sm:p-3 rounded-2xl shadow-sm">
-        <form onSubmit={handleFormSubmit} className="flex flex-wrap items-center gap-2">
-          <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl border border-border bg-muted/30 px-2 py-1.5">
-            <Search className="w-5 h-5 text-primary ml-2 shrink-0" />
+            {/* 2. Enterprise Command Center Search Bar */}
+      <div className="bg-card/90 border border-border rounded-md shadow-sm transition-all focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/10">
+        <form onSubmit={handleFormSubmit} className="p-1.5 flex flex-col md:flex-row items-stretch md:items-center gap-1.5">
+          {/* Unified Input Container */}
+          <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-background/60 rounded-sm border border-border/50 focus-within:border-primary/50 focus-within:bg-background transition-colors">
+            <div className="flex items-center gap-1.5 text-muted-foreground shrink-0 select-none">
+              <Building2 className="w-4 h-4 text-primary" />
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-muted-foreground hidden sm:inline">
+                Account
+              </span>
+              <span className="text-border hidden sm:inline">|</span>
+            </div>
+
             <input
               type="text"
-              placeholder={animatedPlaceholder || " "}
+              placeholder="Search account name, domain, or customer..."
               value={accountName}
               onChange={(e) => setAccountName(e.target.value)}
               disabled={loading}
-              className="w-full bg-transparent border-none text-foreground text-base placeholder:text-muted-foreground focus:outline-none focus:ring-0 px-2 py-2"
+              className="w-full bg-transparent text-sm font-medium text-foreground placeholder:text-muted-foreground/60 placeholder:font-normal focus:outline-none"
             />
+
+            {accountName && !loading && (
+              <button
+                type="button"
+                onClick={() => setAccountName("")}
+                className="text-muted-foreground hover:text-foreground p-0.5 rounded hover:bg-muted transition-colors shrink-0"
+                title="Clear input"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            <div className="hidden lg:flex items-center gap-1 shrink-0 select-none pl-1 border-l border-border/60">
+              <kbd className="text-[10px] font-mono text-muted-foreground bg-muted/80 px-1.5 py-0.5 rounded-xs border border-border">
+                ↵ Enter
+              </kbd>
+            </div>
           </div>
 
-          <select
-            value={String(daysBack)}
-            onChange={(e) => setDaysBack(Number(e.target.value))}
-            disabled={loading}
-            className="h-11 rounded-xl border border-border bg-background px-3 py-2 text-xs font-medium text-foreground focus:outline-none focus:ring-0 focus:border-primary min-w-[126px]"
-            aria-label="Days back range"
-            title="Date range"
-          >
-            <option value="90">90 Days</option>
-            <option value="180">180 Days</option>
-            <option value="365">1 Year</option>
-            <option value="730">2 Years</option>
-            <option value="1095">3 Years</option>
-            <option value="1460">4 Years</option>
-          </select>
+          {/* Integrated Date Range Pill */}
+          <div className="flex items-center gap-1.5 bg-background/60 border border-border/50 rounded-sm px-2.5 py-2 shrink-0 focus-within:border-primary/50 transition-colors">
+            <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            <select
+              value={String(daysBack)}
+              onChange={(e) => setDaysBack(Number(e.target.value))}
+              disabled={loading}
+              className="bg-transparent text-xs font-semibold text-foreground focus:outline-none cursor-pointer pr-1"
+              title="Date range filter"
+            >
+              <option value="90">Past 90 Days</option>
+              <option value="180">Past 180 Days (Default)</option>
+              <option value="365">Past 1 Year</option>
+              <option value="730">Past 2 Years</option>
+              <option value="1095">Past 3 Years</option>
+              <option value="1460">Past 4 Years</option>
+            </select>
+          </div>
 
+          {/* Action Button */}
           {loading ? (
             <button
               type="button"
               onClick={handleCancelSearch}
-              className="bg-rose-600/10 hover:bg-rose-600/20 text-rose-500 border border-rose-500/30 font-semibold px-4 py-2.5 rounded-xl flex items-center gap-1.5 transition-all text-xs shrink-0"
+              className="h-10 px-4 rounded-sm border border-destructive/40 bg-destructive/10 text-destructive text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-destructive/20 transition-colors shrink-0"
             >
               <XCircle className="w-4 h-4" />
               <span>Cancel</span>
@@ -742,257 +583,218 @@ export const GongItTab = () => {
             <button
               type="submit"
               disabled={!accountName.trim()}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 font-semibold px-6 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-md disabled:opacity-40 shrink-0"
+              className="h-10 px-5 rounded-sm bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 shadow-sm disabled:opacity-40 disabled:pointer-events-none shrink-0"
             >
-              <ArrowRight className="w-4 h-4" />
-              <span>{isChiikawaTheme ? "Gong It 🎀" : "Gong It"}</span>
+              <Activity className="w-3.5 h-3.5" />
+              <span>Run Intelligence</span>
             </button>
           )}
         </form>
 
+        {/* Integrated Loading Bar */}
         {loading && (
-          <div className="mt-3 pt-3 border-t border-border px-3 space-y-2">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-primary font-medium flex items-center gap-2">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-                {progressText}
-              </span>
-              <span className="text-muted-foreground italic font-mono">Stage {progressStage}/3</span>
+          <div className="px-3.5 py-2 bg-muted/20 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+              <span className="font-medium text-foreground">{progressText}</span>
             </div>
-            <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden">
-              <div
-                className="bg-primary h-full transition-all duration-700 ease-out"
-                style={{ width: `${(progressStage / 3) * 100}%` }}
-              />
-            </div>
+            <span className="font-mono text-[11px]">Phase {progressStage}/3</span>
           </div>
         )}
       </div>
 
+
       {errorMsg && !result && hasError && (
-        <div className="mt-4 bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-sm rounded-xl px-4 py-3 flex items-center gap-2">
+        <div className="bg-destructive/10 border border-destructive/30 text-destructive text-xs rounded-sm p-3 flex items-center gap-2">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span>{errorMsg}</span>
         </div>
       )}
 
+      {/* 3. Output Dashboard */}
       {result && (
-        <div className="space-y-6 animate-in fade-in duration-300">
-          <div className="bg-card border border-border p-5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2 flex-wrap">
-                <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
-                <h3 className="text-foreground font-bold text-lg flex items-center gap-2">
-                  <span>{result.accountName} Briefcase Ready</span>
-                  {isChiikawaTheme && <ChiikawaAvatar />}
-                </h3>
-
-                {isCachedResult && (
-                  <button
-                    onClick={() => executeSearch(result.accountName, true)}
-                    className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1 bg-muted px-2.5 py-0.5 rounded-full border border-border transition-colors"
-                    title="Click to re-query live Supabase & Gong APIs"
-                  >
-                    <RefreshCw className="w-2.5 h-2.5" /> Cached (Refresh Live)
-                  </button>
-                )}
-              </div>
-
-              <div className="flex flex-wrap gap-3 text-xs text-muted-foreground pt-1">
-                {extractedEbstaScore !== undefined && extractedEbstaScore !== null && (
-                  <span className={`flex items-center gap-1.5 border px-2.5 py-1 rounded-md font-mono font-bold ${getEbstaScoreColor(extractedEbstaScore)}`}>
-                    <Activity className="w-3.5 h-3.5 text-current" /> EBSTA Score: {extractedEbstaScore}/100
-                  </span>
-                )}
-                {result.productFootprint && (
-                  <span className="flex items-center gap-1.5 bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20 px-2.5 py-1 rounded-md font-mono font-bold">
-                    <Layers className="w-3.5 h-3.5 text-sky-500" /> CICD: {result.productFootprint.cicd?.edition || "Copado 1"}
-                  </span>
-                )}
-                <span className="flex items-center gap-1.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-md font-mono">
-                  <Users className="w-3.5 h-3.5 text-indigo-500" /> {result.contacts?.length || 0} Contacts
-                </span>
-                <span className="flex items-center gap-1.5 bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 px-2.5 py-1 rounded-md font-mono">
-                  <FileText className="w-3.5 h-3.5 text-blue-500" /> {result.cases?.length || 0} Unique Cases
-                </span>
-                <span className="flex items-center gap-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 px-2.5 py-1 rounded-md font-mono">
-                  <Phone className="w-3.5 h-3.5 text-amber-500" /> {result.transcripts?.length || 0} Gong Calls
-                </span>
-                <span className="flex items-center gap-1.5 bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 px-2.5 py-1 rounded-md font-mono">
-                  Deployer v{versions.deployer}
-                </span>
-                {result.autoDomains?.length > 0 && (
-                  <span className="flex items-center gap-1.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-md font-mono">
-                    <Globe className="w-3.5 h-3.5 text-emerald-500" /> {result.autoDomains.join(", ")}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={downloadSingleMarkdownArtifact}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-5 py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-md shrink-0"
-              >
-                <Download className="w-4 h-4" />
-                <span>Walt's Vault: NotebookLM Artifact</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="bg-card border border-border p-4 rounded-xl space-y-3">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-primary" /> Walt's NotebookLM Prompts
-            </span>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {prompts.map((p, idx) => (
-                <div key={idx} className="bg-muted/40 border border-border p-3 rounded-lg flex flex-col justify-between space-y-2">
-                  <p className="text-foreground text-xs line-clamp-2 italic">"{p}"</p>
-                  <button
-                    onClick={() => copyPromptToClipboard(p, idx)}
-                    className="self-end text-[11px] font-medium text-primary hover:text-primary/80 flex items-center gap-1 transition-colors"
-                  >
-                    {copiedPromptIndex === idx ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedPromptIndex === idx ? "Copied!" : "Copy Prompt"}</span>
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-                              {/* Product Footprint Card */}
-          {result?.productFootprint && (
-            <div className="bg-card border border-border p-5 rounded-2xl space-y-5 shadow-sm animate-in fade-in duration-200">
-              <div className="flex items-center justify-between pb-3 border-b border-border gap-3">
+        <div className="space-y-4">
+          {/* Top KPI Metric Strip */}
+          <div className="bg-card border border-border rounded-sm p-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3 border-b border-border">
+              <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                  <Layers className="w-5 h-5 text-sky-500" />
-                  <h3 className="text-foreground font-bold text-base">Product Footprint</h3>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <h2 className="text-base font-bold text-foreground">{result.accountName}</h2>
+                  {isCachedResult && (
+                    <button
+                      onClick={() => executeSearch(result.accountName, true)}
+                      className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 bg-muted px-2 py-0.5 rounded-sm border border-border"
+                      title="Force fresh query"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" /> Cached
+                    </button>
+                  )}
                 </div>
+                <p className="text-xs text-muted-foreground font-mono">
+                  Sync completed: {new Date().toLocaleTimeString()} · Date Range: {daysBack} days
+                </p>
+              </div>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setShowFootprintCard((curr) => !curr)}
-                    className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:border-primary/60 transition-colors"
-                  >
-                    {showFootprintCard ? "Hide Footprint" : "Show Footprint"}
-                  </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={downloadSingleMarkdownArtifact}
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold px-4 py-2 rounded-sm flex items-center gap-2 transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Export NotebookLM Artifact (.md)</span>
+                </button>
+              </div>
+            </div>
 
-                  <span className="bg-sky-500/10 text-sky-600 dark:text-sky-400 text-xs px-2.5 py-1 rounded-md font-mono font-bold border border-sky-500/20">
-                    {result.productFootprint.cicd?.edition || "Copado 1"}
-                  </span>
+            {/* Datadog-style KPI Stat Row */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 pt-3">
+              <div className="bg-muted/40 border border-border p-2.5 rounded-sm">
+                <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block">EBSTA Score</span>
+                <span className={`text-lg font-bold font-mono mt-0.5 inline-block ${extractedEbstaScore != null ? getEbstaScoreColor(extractedEbstaScore).split(" ")[0] : "text-muted-foreground"}`}>
+                  {extractedEbstaScore != null ? `${extractedEbstaScore}/100` : "N/A"}
+                </span>
+              </div>
+
+              <div className="bg-muted/40 border border-border p-2.5 rounded-sm">
+                <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block">CICD Edition</span>
+                <span className="text-sm font-bold font-mono text-foreground mt-1 truncate block">
+                  {result.productFootprint?.cicd?.edition || "Copado 1"}
+                </span>
+              </div>
+
+              <div className="bg-muted/40 border border-border p-2.5 rounded-sm">
+                <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block">Key Contacts</span>
+                <span className="text-lg font-bold font-mono text-foreground mt-0.5 block">
+                  {result.contacts?.length || 0}
+                </span>
+              </div>
+
+              <div className="bg-muted/40 border border-border p-2.5 rounded-sm">
+                <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block">Support Cases</span>
+                <span className="text-lg font-bold font-mono text-foreground mt-0.5 block">
+                  {result.cases?.length || 0}
+                </span>
+              </div>
+
+              <div className="bg-muted/40 border border-border p-2.5 rounded-sm">
+                <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block">Gong Calls</span>
+                <span className="text-lg font-bold font-mono text-foreground mt-0.5 block">
+                  {result.transcripts?.length || 0}
+                </span>
+              </div>
+
+              <div className="bg-muted/40 border border-border p-2.5 rounded-sm">
+                <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block">Deployer Ver</span>
+                <span className="text-sm font-bold font-mono text-foreground mt-1 block">
+                  v{versions.deployer}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Analysis Prompts Utility Drawer */}
+          <div className="bg-card border border-border rounded-sm overflow-hidden">
+            <button
+              onClick={() => setShowPrompts((p) => !p)}
+              className="w-full px-4 py-2 bg-muted/30 border-b border-border flex items-center justify-between text-xs font-semibold text-foreground hover:bg-muted/60 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <FileText className="w-3.5 h-3.5 text-primary" />
+                <span>Executive NotebookLM Prompts</span>
+              </div>
+              {showPrompts ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+
+            {showPrompts && (
+              <div className="p-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                {prompts.map((p, idx) => (
+                  <div key={idx} className="bg-muted/20 border border-border p-2.5 rounded-sm flex flex-col justify-between gap-2">
+                    <p className="text-xs text-foreground font-mono leading-relaxed line-clamp-3">"{p}"</p>
+                    <button
+                      onClick={() => copyPromptToClipboard(p, idx)}
+                      className="self-start text-[11px] font-medium text-primary hover:underline flex items-center gap-1"
+                    >
+                      {copiedPromptIndex === idx ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedPromptIndex === idx ? "Copied" : "Copy Prompt"}</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Product Footprint Matrix */}
+          {result?.productFootprint && (
+            <div className="bg-card border border-border rounded-sm overflow-hidden">
+              <div className="px-4 py-2.5 bg-muted/30 border-b border-border flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-primary" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">Product Footprint & Licensing</h3>
                 </div>
+                <button
+                  onClick={() => setShowFootprintCard((v) => !v)}
+                  className="text-[11px] text-muted-foreground hover:text-foreground font-medium"
+                >
+                  {showFootprintCard ? "Collapse" : "Expand"}
+                </button>
               </div>
 
               {showFootprintCard && (
-                <div className="space-y-6">
-                  {/* CICD Information Section */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      <Box className="w-3.5 h-3.5 text-sky-500" />
-                      <span>CICD Information</span>
+                <div className="p-4 space-y-4">
+                  {/* Summary Metric Cards */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div className="bg-muted/20 border border-border p-2.5 rounded-sm">
+                      <span className="text-[10px] text-muted-foreground uppercase font-semibold">Admin Seats</span>
+                      <p className="text-base font-bold font-mono text-foreground mt-0.5">
+                        {result.productFootprint.cicd?.adminSeats ?? 0}
+                      </p>
                     </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
-                        <span className="text-[11px] text-muted-foreground">Admin Seats</span>
-                        <span className="text-xl font-bold font-mono text-foreground mt-1">
-                          {result.productFootprint.cicd?.adminSeats ?? "N/A"}
-                        </span>
-                      </div>
-
-                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
-                        <span className="text-[11px] text-muted-foreground">User Seats</span>
-                        <span className="text-xl font-bold font-mono text-foreground mt-1">
-                          {result.productFootprint.cicd?.userSeats ?? "N/A"}
-                        </span>
-                      </div>
-
-                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
-                        <span className="text-[11px] text-muted-foreground">Success Plan</span>
-                        <div className="mt-1">
-                          <span className="text-xs font-semibold bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-md inline-block">
-                            ★ {result.productFootprint.cicd?.successPlan || "Copado Success"}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
-                        <span className="text-[11px] text-muted-foreground">CICD Edition</span>
-                        <div className="mt-1">
-                          <span className="text-xs font-semibold bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-md inline-block">
-                            {result.productFootprint.cicd?.edition || "Copado 1"}
-                          </span>
-                        </div>
-                      </div>
+                    <div className="bg-muted/20 border border-border p-2.5 rounded-sm">
+                      <span className="text-[10px] text-muted-foreground uppercase font-semibold">User Seats</span>
+                      <p className="text-base font-bold font-mono text-foreground mt-0.5">
+                        {result.productFootprint.cicd?.userSeats ?? 0}
+                      </p>
+                    </div>
+                    <div className="bg-muted/20 border border-border p-2.5 rounded-sm">
+                      <span className="text-[10px] text-muted-foreground uppercase font-semibold">CRT User Seats</span>
+                      <p className="text-base font-bold font-mono text-foreground mt-0.5">
+                        {result.productFootprint.crt?.userSeats ?? 0}
+                      </p>
+                    </div>
+                    <div className="bg-muted/20 border border-border p-2.5 rounded-sm">
+                      <span className="text-[10px] text-muted-foreground uppercase font-semibold">Success Plan</span>
+                      <p className="text-xs font-semibold text-foreground mt-1 truncate">
+                        {result.productFootprint.cicd?.successPlan || "Copado Success"}
+                      </p>
                     </div>
                   </div>
 
-                  {/* Add-on Products Section (Clean 2-Column Salesforce Layout) */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      <Layers className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>Add-on Products</span>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Add-on Product Spec Matrix */}
+                  <div>
+                    <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block mb-2">
+                      Add-on Modules Status
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                       {[
-                        {
-                          name: "Data Deployer",
-                          desc: "Relational data migration & seed sets",
-                          icon: Database,
-                          status: result.productFootprint.addons?.dataDeployer,
-                        },
-                        {
-                          name: "Compliance Hub",
-                          desc: "Automated real-time compliance & rule checks",
-                          icon: ShieldCheck,
-                          status: result.productFootprint.addons?.complianceHub,
-                        },
-                        {
-                          name: "Value Stream Maps (VSM)",
-                          desc: "End-to-end pipeline visibility & cycle metrics",
-                          icon: Workflow,
-                          status: result.productFootprint.addons?.vsm,
-                        },
-                        {
-                          name: "Copado Version Control (CVC)",
-                          desc: "Native cloud git repository management",
-                          icon: GitBranch,
-                          status: result.productFootprint.addons?.cvc,
-                        },
+                        { name: "Data Deployer", icon: Database, status: result.productFootprint.addons?.dataDeployer },
+                        { name: "Compliance Hub", icon: ShieldCheck, status: result.productFootprint.addons?.complianceHub },
+                        { name: "Value Stream Maps (VSM)", icon: Workflow, status: result.productFootprint.addons?.vsm },
+                        { name: "Copado Version Control", icon: GitBranch, status: result.productFootprint.addons?.cvc },
                       ].map((addon, idx) => {
-                        const IconComponent = addon.icon;
+                        const Icon = addon.icon;
                         const isActive = addon.status === "Active";
                         return (
-                          <div
-                            key={idx}
-                            className="bg-muted/20 border border-border/70 hover:border-primary/40 hover:bg-muted/30 p-3.5 rounded-xl flex items-center justify-between transition-colors shadow-sm"
-                          >
-                            <div className="flex items-center gap-3">
-                              <div
-                                className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${
-                                  isActive
-                                    ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-500"
-                                    : "bg-muted border-border text-muted-foreground"
-                                }`}
-                              >
-                                <IconComponent className="w-4 h-4" />
-                              </div>
-                              <div>
-                                <p className="text-xs font-bold text-foreground">{addon.name}</p>
-                                <p className="text-[10px] text-muted-foreground line-clamp-1">{addon.desc}</p>
-                              </div>
+                          <div key={idx} className="bg-background border border-border p-2.5 rounded-sm flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                              <span className="text-xs font-medium text-foreground">{addon.name}</span>
                             </div>
-
-                            <span
-                              className={`inline-flex items-center gap-1 text-[11px] font-semibold border px-2.5 py-1 rounded-full shrink-0 ${
-                                isActive
-                                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                                  : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30"
-                              }`}
-                            >
-                              {isActive ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <XCircle className="w-3.5 h-3.5 text-rose-500" />}
+                            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-xs border ${
+                              isActive
+                                ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                                : "bg-muted text-muted-foreground border-border"
+                            }`}>
                               {addon.status || "Inactive"}
                             </span>
                           </div>
@@ -1000,319 +802,208 @@ export const GongItTab = () => {
                       })}
                     </div>
                   </div>
-
-                  {/* Copado Robotic Testing (CRT) Section */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      <Cpu className="w-3.5 h-3.5 text-purple-500" />
-                      <span>Copado Robotic Testing (CRT)</span>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
-                        <span className="text-[11px] text-muted-foreground">User Seats</span>
-                        <span className="text-xl font-bold font-mono text-foreground mt-1">
-                          {result.productFootprint.crt?.userSeats ?? 0}
-                        </span>
-                      </div>
-
-                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
-                        <span className="text-[11px] text-muted-foreground">CRT Edition</span>
-                        <div className="mt-1">
-                          <span className="text-xs font-semibold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-md inline-block">
-                            {result.productFootprint.crt?.edition || "Copado 1 Bundle"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* AI Platform Section (Matches Salesforce 1:1) */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                      <span>AI Platform</span>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
-                        <span className="text-[11px] text-muted-foreground">AI User Seats</span>
-                        <span className="text-xl font-bold font-mono text-foreground mt-1">
-                          {result.productFootprint.aiPlatform?.userSeats ?? 0}
-                        </span>
-                      </div>
-
-                      <div className="bg-muted/30 border border-border/60 p-3 rounded-xl flex flex-col justify-between">
-                        <span className="text-[11px] text-muted-foreground">AI Edition</span>
-                        <div className="mt-1">
-                          <span className="text-xs font-semibold bg-muted text-muted-foreground border border-border px-2 py-0.5 rounded-md inline-block">
-                            {result.productFootprint.aiPlatform?.edition || "—"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
                 </div>
               )}
             </div>
           )}
 
-
-
-          {/* Key Contacts Card */}
-          <div className="bg-card border border-border p-5 rounded-2xl space-y-4 shadow-sm animate-in fade-in duration-200">
-            <div className="flex items-center justify-between pb-3 border-b border-border gap-3">
+          {/* Key Contacts Table */}
+          <div className="bg-card border border-border rounded-sm overflow-hidden">
+            <div className="px-4 py-2.5 bg-muted/30 border-b border-border flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-indigo-500" />
-                <h3 className="text-foreground font-bold text-base">Key Contacts Directory</h3>
+                <Users className="w-4 h-4 text-primary" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
+                  Key Contacts Directory ({result.contacts?.length || 0})
+                </h3>
               </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setShowContactsCard((curr) => !curr)}
-                  className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:border-primary/60 transition-colors"
-                >
-                  {showContactsCard ? "Hide Contacts" : "Show Contacts"}
-                </button>
-
-                <span className="bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-xs px-2.5 py-1 rounded-md font-mono font-bold border border-indigo-500/20">
-                  {result.contacts?.length || 0} Total
-                </span>
-              </div>
+              <button
+                onClick={() => setShowContactsCard((v) => !v)}
+                className="text-[11px] text-muted-foreground hover:text-foreground font-medium"
+              >
+                {showContactsCard ? "Collapse" : "Expand"}
+              </button>
             </div>
 
             {showContactsCard && (
-              <div className="max-h-[380px] overflow-y-auto space-y-2.5 pr-1">
-                {!result.contacts || result.contacts.length === 0 ? (
-                  <p className="text-xs text-muted-foreground italic">No key contacts found for this account.</p>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {result.contacts.map((c: any, i: number) => (
-                      <div key={i} className="bg-muted/30 border border-border/60 p-3 rounded-xl space-y-2 hover:border-primary/30 transition-colors">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                              {c.name}
-                            </h4>
-                            <p className="text-[10px] text-muted-foreground line-clamp-1">{c.title}</p>
-                          </div>
-
-                          <div className="flex items-center gap-1 shrink-0">
-                            {c.isCsmKeyContact && (
-                              <span className="text-[9px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded">
-                                CSM Key
-                              </span>
-                            )}
-                            {c.isKeyContact && (
-                              <span className="text-[9px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded">
-                                Key
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="space-y-1 text-[11px] pt-1.5 border-t border-border/40 font-mono">
-                          {c.email !== "N/A" && (
-                            <div className="flex items-center gap-1.5 text-muted-foreground truncate">
-                              <Mail className="w-3 h-3 text-primary shrink-0" />
-                              <a href={`mailto:${c.email}`} className="hover:underline text-foreground truncate">
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-muted/40 border-b border-border text-muted-foreground font-semibold sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2">Name / Title</th>
+                      <th className="px-3 py-2">Email</th>
+                      <th className="px-3 py-2">Copado Role</th>
+                      <th className="px-3 py-2">Flag</th>
+                      <th className="px-3 py-2">Last Activity</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border font-mono">
+                    {(!result.contacts || result.contacts.length === 0) ? (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground italic font-sans">
+                          No key contacts recorded for this account.
+                        </td>
+                      </tr>
+                    ) : (
+                      result.contacts.map((c: any, i: number) => (
+                        <tr key={i} className="hover:bg-muted/20 transition-colors">
+                          <td className="px-3 py-2 font-sans">
+                            <span className="font-semibold text-foreground block">{c.name}</span>
+                            <span className="text-[10px] text-muted-foreground block truncate max-w-xs">{c.title}</span>
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {c.email !== "N/A" ? (
+                              <a href={`mailto:${c.email}`} className="text-primary hover:underline">
                                 {c.email}
                               </a>
-                            </div>
-                          )}
-                          {c.copadoRole !== "N/A" && (
-                            <p className="text-muted-foreground text-[10px]">
-                              <span className="font-semibold text-foreground">Copado Role:</span> {c.copadoRole}
-                            </p>
-                          )}
-                          <p className="text-muted-foreground text-[10px] flex items-center gap-1 pt-0.5">
-                            <Clock className="w-2.5 h-2.5 text-muted-foreground" />
-                            <span>Last Activity: {c.lastActivity}</span>
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                            ) : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">{c.copadoRole || "—"}</td>
+                          <td className="px-3 py-2">
+                            {c.isCsmKeyContact ? (
+                              <span className="text-[9px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-300 dark:border-amber-800 px-1.5 py-0.5 rounded-xs">
+                                CSM Key
+                              </span>
+                            ) : c.isKeyContact ? (
+                              <span className="text-[9px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 border border-blue-300 dark:border-blue-800 px-1.5 py-0.5 rounded-xs">
+                                Key
+                              </span>
+                            ) : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">{c.lastActivity || "—"}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
 
-          {/* EBSTA Card */}
+          {/* EBSTA Relationship Intelligence */}
           {result?.ebstaData && (
-            <div className="bg-card border border-border p-5 rounded-2xl space-y-4 shadow-sm animate-in fade-in duration-200">
-              <div className="flex items-center justify-between pb-3 border-b border-border gap-3">
+            <div className="bg-card border border-border rounded-sm overflow-hidden">
+              <div className="px-4 py-2.5 bg-muted/30 border-b border-border flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Activity className="w-5 h-5 text-emerald-500" />
-                  <h3 className="text-foreground font-bold text-base">
+                  <Activity className="w-4 h-4 text-primary" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
                     EBSTA Relationship Intelligence
                   </h3>
                 </div>
-
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2">
                   <button
-                    type="button"
-                    onClick={() => setShowEbstaCard((current) => !current)}
-                    className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:border-primary/60 transition-colors"
-                    title={showEbstaCard ? "Hide EBSTA" : "Show EBSTA"}
-                  >
-                    {showEbstaCard ? "Hide EBSTA" : "Show EBSTA"}
-                  </button>
-
-                  <button
-                    type="button"
                     onClick={downloadEbstaArtifact}
-                    className="inline-flex items-center gap-1 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1.5 text-[11px] font-medium text-primary hover:bg-primary/10 transition-colors"
-                    title="Download EBSTA data"
+                    className="text-[11px] text-primary hover:underline font-medium flex items-center gap-1"
                   >
-                    <Download className="w-3.5 h-3.5" />
-                    Download
+                    <Download className="w-3 h-3" /> JSON
                   </button>
-
-                  {extractedEbstaScore !== undefined && extractedEbstaScore !== null && (
-                    <span className={`text-xs font-mono font-bold border px-3 py-1 rounded-full ${getEbstaScoreColor(extractedEbstaScore)}`}>
-                      Overall Account Score: {extractedEbstaScore}/100
-                    </span>
-                  )}
+                  <button
+                    onClick={() => setShowEbstaCard((v) => !v)}
+                    className="text-[11px] text-muted-foreground hover:text-foreground font-medium ml-2"
+                  >
+                    {showEbstaCard ? "Collapse" : "Expand"}
+                  </button>
                 </div>
               </div>
 
               {showEbstaCard && (
-                <>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-                    <div className="bg-muted/30 border border-border/60 p-4 rounded-xl space-y-2">
-                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        Top Engaged Stakeholders ({result.ebstaData.contacts?.length || 0})
-                      </h4>
-                      {(!result.ebstaData.contacts || result.ebstaData.contacts.length === 0) ? (
-                        <p className="text-xs text-muted-foreground italic">No individual contact scores logged.</p>
+                <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block mb-2">
+                      Top Engaged Stakeholders ({result.ebstaData.contacts?.length || 0})
+                    </span>
+                    <div className="border border-border rounded-sm max-h-56 overflow-y-auto divide-y divide-border">
+                      {(!result.ebstaData.contacts?.length) ? (
+                        <p className="p-3 text-xs text-muted-foreground italic">No contact engagement scores logged.</p>
                       ) : (
-                        <div className="max-h-[320px] overflow-y-auto space-y-2 pr-1">
-                          {result.ebstaData.contacts.map((c: any, i: number) => (
-                            <div key={i} className="flex items-center justify-between text-xs bg-background/60 p-2 rounded-lg border border-border/40">
-                              <div>
-                                <p className="font-semibold text-foreground">{c.name}</p>
-                                <p className="text-[10px] text-muted-foreground">{c.title}</p>
-                              </div>
-                              <span className={`font-mono font-bold text-[11px] border px-2 py-0.5 rounded-full shrink-0 ml-2 ${getEbstaScoreColor(c.score)}`}>
-                                {c.score}/100
-                              </span>
+                        result.ebstaData.contacts.map((c: any, i: number) => (
+                          <div key={i} className="px-3 py-2 flex items-center justify-between text-xs hover:bg-muted/20">
+                            <div>
+                              <p className="font-semibold text-foreground">{c.name}</p>
+                              <p className="text-[10px] text-muted-foreground">{c.title}</p>
                             </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="bg-muted/30 border border-border/60 p-4 rounded-xl space-y-2">
-                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        Opportunity Pipeline Health ({result.ebstaData.opportunities?.length || 0})
-                      </h4>
-                      {(!result.ebstaData.opportunities || result.ebstaData.opportunities.length === 0) ? (
-                        <p className="text-xs text-muted-foreground italic">No opportunity scores logged.</p>
-                      ) : (
-                        <div className="max-h-[320px] overflow-y-auto space-y-2 pr-1">
-                          {result.ebstaData.opportunities.map((o: any, i: number) => (
-                            <div key={i} className="flex items-center justify-between text-xs bg-background/60 p-2 rounded-lg border border-border/40">
-                              <div>
-                                <p className="font-semibold text-foreground line-clamp-1">{o.name}</p>
-                                <p className="text-[10px] text-muted-foreground">Stage: {o.stage}</p>
-                              </div>
-                              <span className={`font-mono font-bold text-[11px] border px-2 py-0.5 rounded-full shrink-0 ml-2 ${getEbstaScoreColor(o.score)}`}>
-                                {o.score}/100
-                              </span>
-                            </div>
-                          ))}
-                        </div>
+                            <span className={`font-mono text-xs font-bold px-2 py-0.5 rounded-xs border ${getEbstaScoreColor(c.score)}`}>
+                              {c.score}/100
+                            </span>
+                          </div>
+                        ))
                       )}
                     </div>
                   </div>
 
-                  {result.ebstaData.emails && result.ebstaData.emails.length > 0 && (
-                    <div className="pt-3 border-t border-border space-y-3">
-                      <div className="flex items-center gap-2">
-                        <Mail className="w-4 h-4 text-purple-500" />
-                        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          EBSTA Email Repository Transcripts ({result.ebstaData.emails.length})
-                        </h4>
-                      </div>
-                      <div className="max-h-[260px] overflow-y-auto space-y-2 pr-2">
-                        {result.ebstaData.emails.map((e: any, idx: number) => (
-                          <div key={idx} className="bg-muted/30 border border-border/60 p-3 rounded-xl space-y-1 hover:border-primary/30 transition-colors">
-                            <div className="flex items-center justify-between text-xs font-semibold text-foreground">
-                              <span>{e.subject}</span>
-                              <span className="text-[10px] text-muted-foreground font-mono">
-                                {e.date ? new Date(e.date).toLocaleDateString() : "N/A"}
-                              </span>
+                  <div>
+                    <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block mb-2">
+                      Opportunity Pipeline Health ({result.ebstaData.opportunities?.length || 0})
+                    </span>
+                    <div className="border border-border rounded-sm max-h-56 overflow-y-auto divide-y divide-border">
+                      {(!result.ebstaData.opportunities?.length) ? (
+                        <p className="p-3 text-xs text-muted-foreground italic">No opportunity scores logged.</p>
+                      ) : (
+                        result.ebstaData.opportunities.map((o: any, i: number) => (
+                          <div key={i} className="px-3 py-2 flex items-center justify-between text-xs hover:bg-muted/20">
+                            <div className="truncate mr-2">
+                              <p className="font-semibold text-foreground truncate">{o.name}</p>
+                              <p className="text-[10px] text-muted-foreground">Stage: {o.stage}</p>
                             </div>
-                            <div className="flex items-center gap-3 text-[10px] text-muted-foreground font-mono">
-                              <span>From: {e.from}</span>
-                              <span>To: {e.to}</span>
-                            </div>
-                            <p className="text-foreground text-[11px] line-clamp-2 font-mono bg-background/80 p-2 rounded-lg border border-border/50">
-                              {e.body}
-                            </p>
+                            <span className={`font-mono text-xs font-bold px-2 py-0.5 rounded-xs border shrink-0 ${getEbstaScoreColor(o.score)}`}>
+                              {o.score}/100
+                            </span>
                           </div>
-                        ))}
-                      </div>
+                        ))
+                      )}
                     </div>
-                  )}
-                </>
+                  </div>
+                </div>
               )}
             </div>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-card border border-border rounded-xl p-5 space-y-4">
-              <div className="flex items-center gap-2 pb-3 border-b border-border">
-                <FileText className="w-4 h-4 text-blue-500" />
-                <h3 className="text-foreground text-sm font-semibold">Support Cases</h3>
-                <div className="ml-auto flex items-center gap-2">
+          {/* Split Log Panels: Support Cases vs Gong Transcripts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Left: Support Cases */}
+            <div className="bg-card border border-border rounded-sm overflow-hidden flex flex-col">
+              <div className="px-4 py-2.5 bg-muted/30 border-b border-border flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-primary" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
+                    Support Cases ({result.cases?.length || 0})
+                  </h3>
+                </div>
+                <div className="flex items-center gap-2">
                   <button
-                    type="button"
-                    onClick={() => setShowCasesCard((current) => !current)}
-                    className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:border-primary/60 transition-colors"
-                    title={showCasesCard ? "Hide cases" : "Show cases"}
-                  >
-                    {showCasesCard ? "Hide Cases" : "Show Cases"}
-                  </button>
-
-                  <button
-                    type="button"
                     onClick={downloadCasesArtifact}
-                    className="inline-flex items-center gap-1 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1.5 text-[11px] font-medium text-primary hover:bg-primary/10 transition-colors"
-                    title="Download support cases"
+                    className="text-[11px] text-primary hover:underline font-medium flex items-center gap-1"
                   >
-                    <Download className="w-3.5 h-3.5" />
-                    Download
+                    <Download className="w-3 h-3" /> JSON
                   </button>
-
-                  <span className="bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs px-2.5 py-0.5 rounded-full font-medium">
-                    {result.cases?.length || 0} Total
-                  </span>
+                  <button
+                    onClick={() => setShowCasesCard((v) => !v)}
+                    className="text-[11px] text-muted-foreground hover:text-foreground font-medium ml-2"
+                  >
+                    {showCasesCard ? "Collapse" : "Expand"}
+                  </button>
                 </div>
               </div>
 
               {showCasesCard && (
-                <div className="max-h-[480px] overflow-y-auto space-y-3 pr-2">
-                  {!result.cases || result.cases.length === 0 ? (
-                    <p className="text-muted-foreground text-xs italic">No support cases found for this account.</p>
+                <div className="p-3 max-h-96 overflow-y-auto space-y-2">
+                  {!result.cases?.length ? (
+                    <p className="text-xs text-muted-foreground italic p-2">No support cases found for this account.</p>
                   ) : (
                     result.cases.map((c: any) => (
-                      <div key={c.case_number} className="bg-muted/30 border border-border/60 p-3.5 rounded-xl space-y-2 hover:border-primary/30 transition-colors">
+                      <div key={c.case_number} className="bg-muted/20 border border-border p-2.5 rounded-sm space-y-1 hover:border-primary/40 transition-colors">
                         <div className="flex items-center justify-between">
-                          <span className="text-primary font-mono text-xs font-bold">{c.case_number}</span>
-                          <span className={`text-[10px] font-semibold border px-2 py-0.5 rounded-full ${getStatusBadgeColor(c.status)}`}>
+                          <span className="font-mono text-xs font-bold text-primary">{c.case_number}</span>
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-xs border ${getStatusBadgeColor(c.status)}`}>
                             {c.status || "N/A"}
                           </span>
                         </div>
-                        <p className="text-foreground text-xs font-medium line-clamp-1">{c.subject}</p>
-                        <p className="text-muted-foreground text-[11px] line-clamp-2">
+                        <p className="text-xs font-medium text-foreground">{c.subject}</p>
+                        <p className="text-[11px] text-muted-foreground line-clamp-2">
                           {c.description && c.description !== "null" ? c.description : "No description provided."}
                         </p>
-                        <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-border/50">
+                        <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-border font-mono">
                           <span>Owner: {c.case_owner || "N/A"}</span>
-                          <span className="flex items-center gap-1"><Clock className="w-2.5 h-2.5" /> {c.date_opened}</span>
+                          <span>Opened: {c.date_opened}</span>
                         </div>
                       </div>
                     ))
@@ -1321,87 +1012,65 @@ export const GongItTab = () => {
               )}
             </div>
 
-            <div className="bg-card border border-border rounded-xl p-5 space-y-4">
-              <div className="flex items-center gap-2 pb-3 border-b border-border">
-                <Phone className="w-4 h-4 text-amber-500" />
-                <h3 className="text-foreground text-sm font-semibold">Gong Transcripts</h3>
-                <div className="ml-auto flex items-center gap-2">
+            {/* Right: Gong Transcripts */}
+            <div className="bg-card border border-border rounded-sm overflow-hidden flex flex-col">
+              <div className="px-4 py-2.5 bg-muted/30 border-b border-border flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Phone className="w-4 h-4 text-primary" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
+                    Gong Transcripts ({result.transcripts?.length || 0})
+                  </h3>
+                </div>
+                <div className="flex items-center gap-2">
                   <button
-                    type="button"
-                    onClick={() => setShowGongCard((current) => !current)}
-                    className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:border-primary/60 transition-colors"
-                    title={showGongCard ? "Hide calls" : "Show calls"}
-                  >
-                    {showGongCard ? "Hide Calls" : "Show Calls"}
-                  </button>
-
-                  <button
-                    type="button"
                     onClick={downloadGongArtifact}
-                    className="inline-flex items-center gap-1 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1.5 text-[11px] font-medium text-primary hover:bg-primary/10 transition-colors"
-                    title="Download Gong transcripts"
+                    className="text-[11px] text-primary hover:underline font-medium flex items-center gap-1"
                   >
-                    <Download className="w-3.5 h-3.5" />
-                    Download
+                    <Download className="w-3 h-3" /> MD
                   </button>
-
-                  <span className="bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs px-2.5 py-0.5 rounded-full font-medium">
-                    {result.transcripts?.length || 0} Calls
-                  </span>
+                  <button
+                    onClick={() => setShowGongCard((v) => !v)}
+                    className="text-[11px] text-muted-foreground hover:text-foreground font-medium ml-2"
+                  >
+                    {showGongCard ? "Collapse" : "Expand"}
+                  </button>
                 </div>
               </div>
 
               {showGongCard && (
-                <div className="max-h-[480px] overflow-y-auto space-y-3 pr-2">
-                  {!displayTranscripts || displayTranscripts.length === 0 ? (
-                    <p className="text-muted-foreground text-xs italic">No recent Gong transcripts found for this account.</p>
+                <div className="p-3 max-h-96 overflow-y-auto space-y-2">
+                  {!displayTranscripts?.length ? (
+                    <p className="text-xs text-muted-foreground italic p-2">No Gong transcripts found for this account.</p>
                   ) : (
                     displayTranscripts.map((t: any) => (
-                      <div key={t.callId || t.id || `${t.title}-${t.started}`} className="bg-muted/30 border border-border/60 p-3.5 rounded-xl space-y-2.5 hover:border-primary/30 transition-colors">
+                      <div key={t.callId || t.id || `${t.title}-${t.started}`} className="bg-muted/20 border border-border p-2.5 rounded-sm space-y-1.5 hover:border-primary/40 transition-colors">
                         <div className="flex items-start justify-between gap-2">
-                          <h4 className="text-foreground text-xs font-bold line-clamp-1 flex items-center gap-1.5">
-                            <Layers className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                            <span>{t.title || t.callName || t.name || "Untitled Gong Call"}</span>
+                          <h4 className="text-xs font-bold text-foreground line-clamp-1">
+                            {t.title || t.callName || "Untitled Gong Call"}
                           </h4>
-
                           {t.url && (
                             <a
                               href={t.url}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 border border-amber-500/30 px-2 py-0.5 rounded-lg font-semibold shrink-0 flex items-center gap-1 transition-colors"
+                              className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
                             >
-                              <span>Watch in Gong</span>
+                              <span>Open Call</span>
                               <ExternalLink className="w-2.5 h-2.5" />
                             </a>
                           )}
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground font-mono">
+                        <div className="flex items-center gap-3 text-[10px] text-muted-foreground font-mono">
                           <span className="flex items-center gap-1">
-                            <Clock className="w-3 h-3 text-muted-foreground" /> {t.started || t.startedAt || t.date || "N/A"}
+                            <Clock className="w-3 h-3 text-muted-foreground" /> {t.started || t.startedAt || "N/A"}
                           </span>
-                          {t.durationMinutes && (
-                            <span className="bg-muted px-1.5 py-0.5 rounded border border-border">
-                              ⏱️ {t.durationMinutes} mins
-                            </span>
-                          )}
-                          <span className="opacity-60 ml-auto">ID: {t.callId || t.id || "N/A"}</span>
+                          <span className="opacity-70">ID: {t.callId || t.id}</span>
                         </div>
 
-                        {t.parties && t.parties.length > 0 && (
-                          <div className="flex items-start gap-1 text-[10px] text-muted-foreground border-t border-border/40 pt-1.5">
-                            <Users className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
-                            <p className="line-clamp-1">
-                              <span className="font-semibold text-foreground">Attendees:</span>{" "}
-                              {t.parties.map((p: any) => p.name || p.emailAddress || p.email || "Unknown").join(", ")}
-                            </p>
-                          </div>
-                        )}
-
-                        <p className="text-foreground text-[11px] line-clamp-3 font-mono bg-background/80 p-2.5 rounded-lg border border-border/50 leading-relaxed">
-                          {(t.transcript || []).map((m: any) => (m.sentences || []).map((s: any) => s.text).join(" ")).join(" ") || "No transcript excerpt available."}
-                        </p>
+                        <div className="bg-background/80 p-2 rounded-xs border border-border text-[11px] font-mono text-foreground line-clamp-3 leading-relaxed">
+                          {(t.transcript || []).map((m: any) => (m.sentences || []).map((s: any) => s.text).join(" ")).join(" ") || "No excerpt recorded."}
+                        </div>
                       </div>
                     ))
                   )}
