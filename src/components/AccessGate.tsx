@@ -73,7 +73,7 @@ export const AccessGate: React.FC<AccessGateProps> = ({ children }) => {
           </form>
 
           <p className="mt-6 text-center text-[11px] text-slate-500">
-            For support lead or CSM access inquiries, contact Ethan De La Rosa.
+            For CSM access inquiries, contact Ethan De La Rosa.
           </p>
         </div>
       </div>
